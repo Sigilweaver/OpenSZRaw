@@ -35,3 +35,19 @@ The raw mass spectrometry data is stored in different root-level directories bas
 The `File Property` stream is universally present across all instrument families and is encoded as UTF-8 XML data (with a 4-byte size prefix). Other metadata such as `2D Data Item` and `2D Data Item U` (UTF-16LE) also contain GUD-formatted XML.
 
 This confirms the clean-room finding that no embedded SQLite databases are used; all data is stored directly in binary OLE2 streams.
+
+## Addendum: directory-entry creation timestamps carry the acquisition start time
+
+Unlike `.wiff` (OpenSXRaw), `.lcd`/`.qgd` files do not carry a
+`\x05SummaryInformation` OLE2 property set. However, every CFBF directory
+entry (storage or stream) has its own `created`/`modified` `FILETIME`
+fields per `[MS-CFB]` 2.6.4, exposed by both `olefile`
+(`OleFileIO.getctime(path)`) and the `cfb` Rust crate
+(`Entry::created() -> SystemTime`) without any extra parsing. Real
+Shimadzu files populate these for nearly every entry, and LabSolutions
+writes almost all of a run's top-level storages within well under a
+second of each other at run start - so the earliest non-zero `created`
+value in the container is a reliable acquisition-start proxy. See
+`docs/format/06-known-limitations.md` section 9 for the corpus-wide
+internal-consistency evidence (sequential-injection timing regularity)
+and `crates/openszraw::raw::timestamp` for the implementation.

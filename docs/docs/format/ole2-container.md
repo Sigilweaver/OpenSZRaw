@@ -43,3 +43,15 @@ also carry XML.
 
 No embedded SQLite database is used anywhere in these formats; all data
 is stored directly in binary OLE2 streams.
+
+## Acquisition start timestamp
+
+`.lcd`/`.qgd` files don't carry the `\x05SummaryInformation` OLE2
+property set that `.wiff` files use for this. Instead, `Reader::open`
+reads `RunMetadata::start_timestamp` from the CFBF container's own
+per-entry `created` timestamps (`[MS-CFB]` 2.6.4, exposed directly by the
+`cfb` crate) - specifically, the earliest non-zero one across the whole
+container, which LabSolutions writes within well under a second of run
+start for nearly every top-level storage. See
+[Known limitations](./known-limitations) and the repository's
+`docs/format/06-known-limitations.md` section 9 for the corpus evidence.

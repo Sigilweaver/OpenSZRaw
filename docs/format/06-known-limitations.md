@@ -228,7 +228,52 @@ value for Variant B - but the field's meaning for this instrument
 generation is unresolved, not confirmed to be inert. Not investigated
 further this session; flagged here rather than silently ignored.
 
-## 9. PDA 3D Raw Data / LSS Raw Data chromatogram payload: not decoded, not wired into the reader
+## 9. Acquisition `start_timestamp` (RESOLVED - see docs/format/01-ole2-container.md addendum below)
+
+**Resolves Sigilweaver/OpenSZRaw#9.** `RunMetadata::start_timestamp` was
+hardcoded `None` for all three on-disk variants. The
+`\x05SummaryInformation` OLE2 property set that carries this for `.wiff`
+(OpenSXRaw) does not exist in `.lcd`/`.qgd` - confirmed directly with
+`olefile.OleFileIO(...).get_metadata()` against one file from each of
+MTBLS432 (IT-TOF), MSV000084197 (QTOF), and PXD034978 (`.qgd`).
+
+Instead, every CFBF directory entry (storage or stream) carries its own
+`created`/`modified` `FILETIME` fields per `[MS-CFB]` 2.6.4 - independent
+of and not previously checked alongside `\x05SummaryInformation`. Every
+real corpus file populates these, and LabSolutions writes nearly all of a
+run's top-level storages within a fraction of a second of each other at
+run start, so the earliest non-zero `created` value across the whole
+container is a reliable acquisition-start proxy.
+
+Verified via internal consistency only (no vendor software or output),
+per `CONTRIBUTING.md`: across all 9 accessions (~150 files, `.qgd` and all
+three `.lcd` families), the earliest per-file timestamp tracks sequential
+injection order with regular, plausible batch cycle times -
+`PXD025121`'s 29 sequentially numbered files land ~66m43s apart (only two
+gaps, both an exact double-length, consistent with an operator break),
+and `PXD019638`'s 22 files reconstruct a non-alphabetical, 4-way
+interleaved injection order (`Br0`, `Br1`, `Br2`, `Br3` cycled in turn,
+~68 minutes apart within each branch) purely from timestamps - a pattern
+that could not fall out of a naive filename-based heuristic.
+
+`crates/openszraw::raw::timestamp::earliest_created_timestamp` now
+computes this at `Reader::open()` time via the `cfb` crate's own
+`Entry::created()` (no raw `FILETIME` parsing needed - `cfb` already
+converts to `SystemTime`), and `run_metadata()` populates
+`start_timestamp` with it for all three variants. Confirmed against the
+full local corpus: 139/139 files that open successfully populate a
+timestamp (the remaining 12 are the pre-existing, unrelated MTBLS12691
+QQQ/TLM open failure from section 7 above, not a gap in this feature).
+
+**What remains open**: the earliest CFBF entry timestamp is a proxy for
+"file/run creation," not a hardware-triggered "first scan acquired"
+event - these are expected to differ by, at most, low single-digit
+seconds (the time LabSolutions takes to initialize the container before
+triggering the run), which is consistent with every other vendor crate in
+this suite treating `start_timestamp` as a run/method-start proxy rather
+than a to-the-microsecond experiment start.
+
+## 10. PDA 3D Raw Data / LSS Raw Data chromatogram payload: not decoded, not wired into the reader
 
 Unlike sections 1-5 above, this is not a gap in something the reader
 implements - `PDA 3D Raw Data` and `LSS Raw Data` chromatogram streams
