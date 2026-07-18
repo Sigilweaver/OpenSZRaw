@@ -46,12 +46,11 @@ from the filename or extension alone.
 
 ## Status
 
-Neither the Rust crate (`openszraw`) nor the Python package
-(`openszraw`) has been published yet (crates.io / PyPI). OpenSZRaw is
-also not yet wired into
+Published on crates.io and PyPI as `openszraw`, v0.1.0. OpenSZRaw is
+not yet wired into
 [openmassspec-io](https://github.com/Sigilweaver/OpenMassSpec) as a
-`shimadzu` feature. See [Install](./install) for how to use it from
-source today.
+`shimadzu` feature. See [Install](./install) for how to add it to your
+project today.
 
 ## Next steps
 

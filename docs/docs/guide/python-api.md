@@ -6,8 +6,8 @@ sidebar_position: 5
 
 The Python bindings (`crates/openszraw-py`, a PyO3 crate) expose a
 small, eager reader built on the same Rust core as the
-[Rust reader](./reader). They are not yet published to PyPI - build
-them locally with maturin, see [Install](../install).
+[Rust reader](./reader). Install with `pip install openszraw`, see
+[Install](../install).
 
 ```python
 import openszraw

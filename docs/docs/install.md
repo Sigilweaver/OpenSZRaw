@@ -4,14 +4,10 @@ sidebar_position: 2
 
 # Install
 
-OpenSZRaw is not yet published to crates.io or PyPI. Until then, use it
-from source.
-
 ## Rust
 
-```toml
-[dependencies]
-openszraw = { git = "https://github.com/Sigilweaver/OpenSZRaw" }
+```sh
+cargo add openszraw
 ```
 
 OpenSZRaw needs Rust 1.85 or newer. There are no native or system
@@ -19,9 +15,13 @@ dependencies.
 
 ## Python
 
-Python bindings (`crates/openszraw-py`, a PyO3 crate) exist in the
-repository but are not yet packaged or published. Build the wheel
-locally with [maturin](https://www.maturin.rs/):
+```sh
+pip install openszraw
+```
+
+Wheels are published for CPython 3.8-3.15 and PyPy on Linux, macOS, and
+Windows. To build from source instead (e.g. for a platform without a
+prebuilt wheel), use [maturin](https://www.maturin.rs/):
 
 ```sh
 git clone https://github.com/Sigilweaver/OpenSZRaw
@@ -29,9 +29,6 @@ cd OpenSZRaw
 pip install maturin
 maturin develop --release
 ```
-
-This builds and installs the `openszraw` Python module into your active
-virtualenv.
 
 ## Verifying the install
 
