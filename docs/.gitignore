@@ -1,0 +1,7 @@
+/build
+/.docusaurus
+/.cache-loader
+/.wrangler
+node_modules
+*.log
+.DS_Store

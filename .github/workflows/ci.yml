@@ -3,15 +3,12 @@
 # Jobs:
 #   build - cargo fmt --check, cargo clippy -D warnings, cargo test
 #           (Linux + macOS)
+#   docs  - Docusaurus site build (docs/)
 #
 # There is no corpus-download validation job yet. The conformance tests
 # (crates/openszraw/tests/conformance.rs) run against a real corpus fixture
 # that lives out of tree, so they skip cleanly when the corpus is absent -
 # as it is on CI. Matches the sibling readers' single-fixture stage.
-#
-# No docs job yet: the Docusaurus site (docs/) has not been scaffolded
-# for this repo. Add a docs build job here once it exists, mirroring the
-# sibling readers' ci.yml.
 
 name: CI
 
@@ -54,3 +51,17 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace --all-targets
+
+  docs:
+    name: Docs (Docusaurus)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: bun install
+        run: bun install --frozen-lockfile
+      - name: bun run build:cloudflare
+        run: bun run build:cloudflare
