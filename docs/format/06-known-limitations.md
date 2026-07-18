@@ -204,3 +204,17 @@ fetched files) since it does not currently branch on this field's exact
 value for Variant B - but the field's meaning for this instrument
 generation is unresolved, not confirmed to be inert. Not investigated
 further this session; flagged here rather than silently ignored.
+
+## 9. PDA 3D Raw Data / LSS Raw Data chromatogram payload: not decoded, not wired into the reader
+
+Unlike sections 1-5 above, this is not a gap in something the reader
+implements - `PDA 3D Raw Data` and `LSS Raw Data` chromatogram streams
+are not wired into `crates/openszraw` at all. See
+`docs/format/04-lcd-chromatogram-pda.md` for the full write-up: the
+segment envelope (24-byte `RC\x00\x00` header, plus a newly-confirmed
+4-byte-or-8-byte length-checked wrapper around each segment's body) is
+solid and exhaustively verified, but the per-point value encoding inside
+that body remains undecoded despite a wide sweep of variable-length
+integer and escape-byte hypotheses (Sigilweaver/OpenSZRaw#2). This is UV
+detector / chromatogram data, not core MS spectra, so it does not block
+MS-level format parity.
