@@ -11,4 +11,5 @@ re/
 *.swo
 .idea/
 venv/
+.venv/
 Cargo.lock

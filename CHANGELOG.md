@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documented in `docs/format/`.
 - `examples/corpus_scan.rs` for running the reader across a full local
   corpus and reporting per-file pass/fail and spectrum counts.
+- Python bindings via a new `openszraw-py` PyO3 crate, exposing
+  `RawReader` and `Spectrum` to mirror the sibling readers' Python API.
+  Packaged as `openszraw` on PyPI; wheels (Linux/macOS/Windows) and an
+  sdist build and publish from the release workflow.
 
 ### Known limitations
 
@@ -30,7 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the scan header or `Spectrum Index` stream.
 - PDA/chromatogram stream decoding (bit-packed delta encoding) is not
   yet solved.
-- Python bindings are not yet implemented.
 
 See [docs/format/06-known-limitations.md](docs/format/06-known-limitations.md)
 for the full detail behind each of these.

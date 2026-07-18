@@ -1,7 +1,7 @@
 # OpenSZRaw
 
-Planned Rust and Python reader for Shimadzu LabSolutions mass
-spectrometry raw data (`.lcd` LC-MS, `.qgd` GCMS, `.gcd` GC), clean-room
+Rust and Python reader for Shimadzu LabSolutions mass spectrometry raw
+data (`.lcd` LC-MS, `.qgd` GCMS, `.gcd` GC), clean-room
 reverse-engineered with no Shimadzu SDK or software dependency.
 
 > Sibling readers in the same stack:
@@ -19,12 +19,61 @@ IT-TOF (run-length-encoded profile spectra over a raw, uncalibrated
 time-bin axis), and `.lcd` QTOF (centroid). See `docs/format/` for the
 byte-level format specs and `docs/format/06-known-limitations.md` for
 what is deliberately not yet resolved (TOF calibration, some MS2
-precursor m/z values). Python bindings are not yet implemented. See the
-sourcing strategy in the ops repo's
+precursor m/z values). Python bindings (`crates/openszraw-py`) mirror
+the Rust API; neither the Rust crate nor the Python package has been
+published (crates.io / PyPI) yet. Not yet wired into
+[openmassspec-io](https://github.com/Sigilweaver/OpenMassSpec) as a
+`shimadzu` feature. See the sourcing strategy in the ops repo's
 [SCOPING_PLAN.md](https://github.com/Sigilweaver/ops/blob/main/SCOPING_PLAN.md)
 and this repo's `re/ROADMAP.md` (local-only, gitignored) for the current
 phase.
 
+## Install (not yet published)
+
+Rust:
+
+```sh
+cargo add openszraw
+```
+
+Python:
+
+```sh
+pip install openszraw
+```
+
+## Quickstart
+
+Rust:
+
+```rust
+use openszraw::reader::Reader;
+use openmassspec_core::SpectrumSource;
+
+let mut reader = Reader::open("sample.lcd")?;
+for spectrum in reader.iter_spectra() {
+    println!("{}: {} peaks", spectrum.native_id, spectrum.mz.len());
+}
+```
+
+Python:
+
+```python
+import openszraw
+
+reader = openszraw.RawReader("sample.lcd")
+spectrum = reader.read_spectrum(0)
+print(spectrum.ms_level, spectrum.retention_time_sec, len(spectrum.mz))
+```
+
+`Reader::open` (and `RawReader`) auto-detects `.qgd` vs `.lcd` IT-TOF vs
+`.lcd` QTOF from the file's internal CFBF stream layout, never from the
+filename or extension alone.
+
 ## License
 
-Apache-2.0.
+Apache-2.0. See [LICENSE](LICENSE).
+
+The format specification was developed by binary analysis of public
+mass-spectrometry datasets (PRIDE, MassIVE, and MetaboLights accessions).
+See [CORPUS.md](CORPUS.md) and [ATTRIBUTION.md](ATTRIBUTION.md).
