@@ -101,9 +101,27 @@ pub struct QtflSpectrum {
 }
 
 /// Decode one scan's full byte range (64-byte header + payload) into a
-/// centroid spectrum. Payload size `S` (bytes) is read from the header at
-/// `u32[6]`; `N = S / 10` peaks follow as `N` u64 m/z values (scaled by
-/// 1e12) then `N` u16 intensities.
+/// centroid spectrum.
+///
+/// Payload size `S` (bytes) is read from the header at `u32[6]`. **The
+/// intensity array's byte width is *not* always 2 bytes** as
+/// `docs/format/05-qtfl-centroid.md` states (that doc only checked
+/// low-intensity MS1 scans) - it is read from the header at `u32[9]`
+/// (byte offset 0x24), and is 1, 2, or 4 bytes depending on the scan's
+/// dynamic range. `N = S / (8 + intensity_width)` peaks follow: `N` u64
+/// m/z values (scaled by 1e12) then `N` little-endian unsigned intensity
+/// values of that width. Verified this session against
+/// `MSV000084197/20190607_NM16.lcd` by cross-checking `max(intensity)`
+/// against the header's declared base-peak intensity (`u32[4]`) across
+/// every non-empty scan in the file: 0 mismatches out of 13,929 scans
+/// once the width is read from `u32[9]` (width distribution in that file:
+/// 13,696 scans at 2 bytes, 218 at 4 bytes, 15 at 1 byte) - see the
+/// addendum in `docs/format/05-qtfl-centroid.md`. Using a fixed 2-byte
+/// width unconditionally (the original doc's model) silently produces a
+/// corrupt decode on the wider-dynamic-range scans (confirmed by hand:
+/// treating a real 4-byte-intensity MS2 scan as 2-byte intensity yields a
+/// spurious zero-interleaved pattern and a base-peak intensity that does
+/// not match the header's declared value).
 pub fn decode_scan(scan_bytes: &[u8]) -> crate::Result<QtflSpectrum> {
     if scan_bytes.len() < SCAN_HEADER_SIZE {
         return Err(crate::Error::Parse(format!(
@@ -113,6 +131,7 @@ pub fn decode_scan(scan_bytes: &[u8]) -> crate::Result<QtflSpectrum> {
     }
     let bpi = LittleEndian::read_u32(&scan_bytes[0x10..0x14]);
     let payload_size = LittleEndian::read_u32(&scan_bytes[0x18..0x1C]) as usize;
+    let intensity_width = LittleEndian::read_u32(&scan_bytes[0x24..0x28]) as usize;
     let payload = &scan_bytes[SCAN_HEADER_SIZE..];
 
     if payload_size == 0 {
@@ -124,14 +143,20 @@ pub fn decode_scan(scan_bytes: &[u8]) -> crate::Result<QtflSpectrum> {
             payload.len()
         )));
     }
-    if payload_size % 10 != 0 {
+    if !matches!(intensity_width, 1 | 2 | 4) {
         return Err(crate::Error::Parse(format!(
-            "QTOF centroid payload size {payload_size} is not a multiple of 10"
+            "QTOF centroid scan has unsupported intensity width {intensity_width} (expected 1, 2, or 4 bytes)"
         )));
     }
-    let n = payload_size / 10;
+    let record_size = 8 + intensity_width;
+    if payload_size % record_size != 0 {
+        return Err(crate::Error::Parse(format!(
+            "QTOF centroid payload size {payload_size} is not a multiple of {record_size} (8-byte mz + {intensity_width}-byte intensity)"
+        )));
+    }
+    let n = payload_size / record_size;
     let mz_bytes = &payload[0..n * 8];
-    let intensity_bytes = &payload[n * 8..n * 8 + n * 2];
+    let intensity_bytes = &payload[n * 8..n * 8 + n * intensity_width];
 
     let mut mz = Vec::with_capacity(n);
     for i in 0..n {
@@ -140,7 +165,13 @@ pub fn decode_scan(scan_bytes: &[u8]) -> crate::Result<QtflSpectrum> {
     }
     let mut intensity = Vec::with_capacity(n);
     for i in 0..n {
-        let raw_intensity = LittleEndian::read_u16(&intensity_bytes[i * 2..i * 2 + 2]);
+        let base = i * intensity_width;
+        let raw_intensity: u32 = match intensity_width {
+            1 => intensity_bytes[base] as u32,
+            2 => LittleEndian::read_u16(&intensity_bytes[base..base + 2]) as u32,
+            4 => LittleEndian::read_u32(&intensity_bytes[base..base + 4]),
+            _ => unreachable!("checked above"),
+        };
         intensity.push(raw_intensity as f32);
     }
 
@@ -162,6 +193,26 @@ mod tests {
         let mut buf = vec![0u8; SCAN_HEADER_SIZE];
         LittleEndian::write_u32(&mut buf[0x10..0x14], bpi);
         LittleEndian::write_u32(&mut buf[0x18..0x1C], payload_size as u32);
+        LittleEndian::write_u32(&mut buf[0x24..0x28], 2); // 2-byte intensity width
+        for m in mzs_scaled {
+            buf.extend_from_slice(&m.to_le_bytes());
+        }
+        for i in intensities {
+            buf.extend_from_slice(&i.to_le_bytes());
+        }
+        buf
+    }
+
+    /// Build a scan using 4-byte (u32) intensities, mirroring a real
+    /// high-dynamic-range MS2 scan (see `decode_scan`'s doc comment).
+    fn build_scan_u32_intensity(bpi: u32, mzs_scaled: &[u64], intensities: &[u32]) -> Vec<u8> {
+        let n = mzs_scaled.len();
+        assert_eq!(n, intensities.len());
+        let payload_size = n * 12;
+        let mut buf = vec![0u8; SCAN_HEADER_SIZE];
+        LittleEndian::write_u32(&mut buf[0x10..0x14], bpi);
+        LittleEndian::write_u32(&mut buf[0x18..0x1C], payload_size as u32);
+        LittleEndian::write_u32(&mut buf[0x24..0x28], 4); // 4-byte intensity width
         for m in mzs_scaled {
             buf.extend_from_slice(&m.to_le_bytes());
         }
@@ -187,6 +238,22 @@ mod tests {
         assert!((spec.mz[1] - 537.47638401691).abs() < 1e-6);
         assert_eq!(spec.intensity, vec![2886.0, 1013.0]);
         assert_eq!(spec.base_peak_intensity, Some(6650.0));
+    }
+
+    #[test]
+    fn decodes_a_wide_dynamic_range_scan_with_u32_intensity() {
+        // Reproduces record 188 (scan_number=185) from
+        // MSV000084197/20190607_NM16.lcd: header declares intensity
+        // width=4 and BPI=68489, which does not fit in a u16 - the
+        // 2-byte-intensity model would silently mis-decode this scan.
+        let scan = build_scan_u32_intensity(
+            68489,
+            &[516_753_564_527_092, 732_151_569_984_656],
+            &[30272, 68489],
+        );
+        let spec = decode_scan(&scan).expect("decode");
+        assert_eq!(spec.intensity, vec![30272.0, 68489.0]);
+        assert_eq!(spec.base_peak_intensity, Some(68489.0));
     }
 
     #[test]
