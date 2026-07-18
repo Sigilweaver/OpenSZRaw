@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Corpus expansion (local validation corpus, not shipped): grew from
+  94 files/~960 MB/6 accessions to 151 files/~2.9 GB/9 accessions. New:
+  a second independent QTOF (LCMS-9030) source (`MTBLS14820`, 10 files),
+  the corpus's first QQQ/triple-quad sample (`MTBLS12691`, LCMS-8060
+  MRM, 12 files - not yet decodable by the reader, see
+  `docs/format/06-known-limitations.md` #7), a third GC-MS(/MS)
+  accession on a newer instrument generation (`MTBLS11411`, GC/MS-TQ8050
+  NX, 5 files), and a broadened `MTBLS432` (15 -> 45 of 93 available
+  files). `CORPUS.md`'s accession table now tracks instrument family and
+  acquisition mode per accession, not just container format.
+
 - Initial Rust reader (`openszraw`) for Shimadzu LabSolutions raw data,
   covering `.qgd` GC-MS (full-scan profile and MRM/targeted acquisition),
   `.lcd` IT-TOF (run-length-encoded profile spectra over a raw,

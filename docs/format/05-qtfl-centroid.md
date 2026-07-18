@@ -61,3 +61,49 @@ byte-layout claim it was originally verified against (which remains
 correct for the common 16-bit-intensity case); it did not cover scan
 classification or the variable intensity width, both undiscovered at
 the time.
+
+## Addendum (corpus expansion session, 2026-07-18): corroborated on a second, independent QTOF source
+
+Every claim above and in `docs/format/06-known-limitations.md` sections 3
+and 4 was, until this session, verified against exactly one file
+(`MSV000084197/20190607_NM16.lcd`). A second independent QTOF source
+(`MTBLS14820`, 10 files, a different LCMS-9030 instrument at a different
+institution, negative-ion DDA metabolomics on wheat leaf extracts) is now
+in the corpus, and a standalone check script
+(`re/src/analysis/qtfl_corroborate.py`, gitignored/local-only, not part of
+the Rust reader) re-derives the same two claims independently:
+
+- **Intensity byte width + BPI consistency** (`docs/format/06` #4):
+  across all 9 fetched `MTBLS14820` files (~66,300 scans checked total),
+  `max(intensity)` matched the header's declared base-peak intensity
+  (`u32[4]`) with the width read from `u32[9]` in **every single case, 0
+  mismatches** - the same result as the original single-file check.
+  Width distribution was similar in shape (mostly 2-byte, with real 1-
+  and 4-byte scans present in every file) though the exact proportions
+  differ per file, as expected for different samples/methods.
+- **`event_id` MS1/MS2 cycle structure** (`docs/format/06` #3): held on
+  every file - `event_id == 1` always starts a cycle (MS1), and
+  subsequent events strictly increase within a cycle. The specific range
+  differs from the original file: `MTBLS14820`'s cycles are always
+  exactly 1 MS1 + 0-1 MS2 (`event_id` never exceeds 2), versus
+  `MSV000084197`'s 1 MS1 + up to 3 MS2 events. This is a **narrower**
+  range, not a contradiction - consistent with a DDA method configured
+  for fewer precursors per cycle (e.g. "top-1" vs "top-4"), which is a
+  per-method acquisition parameter, not a fixed format property.
+
+One new observation, not previously documented: about 1% of `Centroid
+Index` records per file decode a scan-header intensity-width field that
+is not 1, 2, or 4 (garbage values like 260 were observed). These are the
+same records `crates/openszraw::reader::qtfl_spectra` already silently
+skips via its `Err(_) => continue` on `qtfl::decode_scan`'s width
+validation - i.e. this is pre-existing tolerated behavior, not a new
+break, and was very likely present at a similar rate in the original file
+too (its own check only ever reported success/failure over the scans
+that *could* be parsed, not over 100% of index records). Worth a closer
+look at what these records actually are (a genuine format oddity around
+interleaved-subset boundaries, going by `docs/format/05`'s original
+"Subset/Interleave Index" language) in a future session, but out of
+scope here.
+
+**Net result: both corrections in `docs/format/06-known-limitations.md`
+are corroborated, not contradicted, by this second source.**

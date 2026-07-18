@@ -133,3 +133,74 @@ since no per-file instrument-model string was found decoded anywhere in
 the corpus (per-spectrum `Analyzer::SQMS` vs `Analyzer::TQMS` is
 inferred from the scan's own decoded acquisition mode - profile vs MRM -
 which is a real, evidenced distinction, not a guess).
+
+## 6. QTOF (`.lcd` QTFL): sections 3 and 4 corroborated on a second independent source
+
+`MTBLS14820` (10 files, a second, independent LCMS-9030 QTOF source
+fetched during the 2026-07-18 corpus expansion pass) reproduces both
+corrections below with 0 mismatches across ~66,300 checked scans - see
+the addendum in `docs/format/05-qtfl-centroid.md` for the full detail.
+This was previously verified against only one file
+(`MSV000084197/20190607_NM16.lcd`).
+
+## 7. QQQ (`.lcd`): a fourth on-disk variant now has corpus representation, but is not decoded, and is currently misdetected as QTOF
+
+The 2026-07-18 corpus expansion pass added the first confirmed QQQ
+(triple quadrupole) sample to the corpus: `MTBLS12691`, an LCMS-8060
+system running MRM-targeted acquisition (Shimadzu's "LC/MS/MS Method
+Package for Primary Metabolites v2", per the study's own methods
+description). These files fail to open in the current reader.
+
+Two distinct things are going on, worth separating clearly:
+
+1. **The QQQ variant is not decoded at all.** Its real per-spectrum data
+   lives under a `TLM Raw Data` storage (`TLM Raw Data/MS Raw Data`,
+   `TLM Raw Data/Spectrum Index`, `TLM Raw Data/Retention Time`, plus
+   status/TIC streams) - structurally closer to `.qgd` GC-MS's
+   `MS Raw Data`/`Spectrum Index` naming than to either `TTFL Raw Data`
+   or `QTFL RawData`, which makes sense: QQQ and (single/triple-quad)
+   GC-MS share a quadrupole-based architecture, unlike the TOF-based
+   IT-TOF/QTOF formats. Nothing in `crates/openszraw::raw` parses this
+   storage - it is not read anywhere in the crate.
+2. **`raw::detect_variant` actively misidentifies these files as QTOF**,
+   producing a confusing error rather than a clear "unsupported"
+   message. Every `.lcd` file - QQQ ones included - carries an
+   always-present `QTFL RawData` storage as boilerplate, even when it
+   has none of the substreams (`Centroid Index`, `Centroid Data`) that
+   actually make a file QTOF. `detect_variant` checks `TTFL Raw Data`
+   first, then treats *any* remaining `QTFL RawData` presence as
+   sufficient to call it `Variant::Qtfl` - so a QQQ file with an empty
+   `QTFL RawData` storage is misclassified as QTOF, and then fails with
+   `stream 'QTFL RawData/Centroid Index' not found` instead of a clear
+   "this is a QQQ/TLM file, not yet supported" message. Confirmed by
+   listing the full CFBF storage tree of `MTBLS12691/20210325_024.lcd`:
+   `QTFL RawData` is present and empty, `TLM Raw Data` is present and
+   populated.
+
+Neither is fixed in this pass (out of scope for a corpus/docs-only
+session - implementing a new payload decoder deserves its own dedicated
+clean-room analysis, not a rushed addition here).
+[Sigilweaver/OpenSZRaw#5](https://github.com/Sigilweaver/OpenSZRaw/issues/5)
+tracks both: correcting `detect_variant` to name the QQQ/TLM variant
+explicitly (even before it's decoded, so the error message is honest
+about what wasn't understood rather than misleading), and eventually
+decoding `TLM Raw Data` itself using the now-available `MTBLS12691`
+corpus sample (12 files fetched; ~296 available in total across the
+study's five remote subdirectories, see `CORPUS.md`).
+
+## 8. GC-MS/MS (`.qgd`, MTBLS11411): a third scan-header `format` value seen, not investigated
+
+`docs/format/02-gcms-qgd-scans.md` documents two `Spectrum Index`/scan
+layouts ("Variant A" profile, "Variant B" MRM), distinguished by index
+width (u32 vs u64) and by where the format/event-ID fields land in the
+32-byte scan header. `MTBLS11411` (GC/MS-TQ8050 NX, a GC-MS/MS triple
+quad - a different, newer instrument generation than either of the
+corpus's existing `.qgd` accessions) uses the Variant B u64 index, but
+its scan header's offset-0x14 `format` field reads `3`, a value neither
+Variant A (`2`) nor the existing Variant B description assigns any
+meaning to. The existing reader decodes these files successfully anyway
+(184,740 spectra/file, `assert_source_invariants` passes for all 5
+fetched files) since it does not currently branch on this field's exact
+value for Variant B - but the field's meaning for this instrument
+generation is unresolved, not confirmed to be inert. Not investigated
+further this session; flagged here rather than silently ignored.
