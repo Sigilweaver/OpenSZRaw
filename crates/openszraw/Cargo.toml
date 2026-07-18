@@ -1,0 +1,25 @@
+[package]
+name = "openszraw"
+description = "Rust reader for Shimadzu LabSolutions mass spectrometry raw data (.qgd GC-MS, .lcd LC-MS IT-TOF/QTOF)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+byteorder = { workspace = true }
+cfb = { workspace = true }
+openmassspec-core = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+openmassspec-core = { workspace = true }

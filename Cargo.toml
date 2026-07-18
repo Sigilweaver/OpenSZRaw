@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["crates/openszraw"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+authors = ["Nathan Riley <git@nathanriley.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/Sigilweaver/OpenSZRaw"
+homepage = "https://sigilweaver.app/openszraw/"
+documentation = "https://sigilweaver.app/openszraw/docs/"
+keywords = ["mass-spectrometry", "shimadzu", "raw", "metabolomics", "gcms"]
+categories = ["parser-implementations", "science"]
+
+[workspace.dependencies]
+openszraw = { path = "crates/openszraw" }
+openmassspec-core = "1.0.0"
+byteorder = "1.5.0"
+cfb = "0.14.0"
+thiserror = "2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
