@@ -209,7 +209,14 @@ fn ttfl_partial_block_conformance() {
 }
 
 #[test]
-fn ttfl_index_axis_is_uncalibrated_but_bounded() {
+fn ttfl_mz_is_calibrated_finite_and_nonnegative() {
+    // `mz` is now calibrated physical m/z (see
+    // `raw::ttfl::Calibration` / `docs/format/03-lcd-ttfl-msdata.md`
+    // section 3c), not the raw time-bin index. This must hold for
+    // *every* decoded value, including the noise-tail high-index
+    // positions documented in `docs/format/06-known-limitations.md`
+    // (those map to very large but still finite, non-negative m/z -
+    // squaring never produces NaN or negative output here).
     let Some(mut reader) = open_or_skip(&ttfl_fixture()) else {
         return;
     };
@@ -220,18 +227,50 @@ fn ttfl_index_axis_is_uncalibrated_but_bounded() {
     let with_peaks: Vec<_> = spectra.iter().filter(|s| !s.mz.is_empty()).collect();
     assert!(!with_peaks.is_empty());
 
-    // The "mz" field here is a raw digitizer/time-bin index (see
-    // docs/format/06-known-limitations.md), not m/z - it should still be
-    // non-negative and bounded. docs/format/03-lcd-ttfl-msdata.md
-    // characterizes the range as "few-thousand to tens-of-thousands,"
-    // but this session found real scans in this exact fixture reaching
-    // ~576,000 (see docs/format/06-known-limitations.md addendum), so
-    // this bound is deliberately generous rather than reproducing the
-    // doc's undersold estimate.
     for s in &with_peaks {
-        for &idx in &s.mz {
-            assert!(idx >= 0.0, "negative time-bin index {idx}");
-            assert!(idx < 2_000_000.0, "implausibly large time-bin index {idx}");
+        for &mz in &s.mz {
+            assert!(mz.is_finite(), "non-finite calibrated m/z {mz}");
+            assert!(mz >= 0.0, "negative calibrated m/z {mz}");
         }
     }
+}
+
+#[test]
+fn ttfl_base_peak_mz_is_plausible_for_most_scans() {
+    // The raw RLE-decoded stream includes a great deal of low-intensity
+    // noise across the whole time-bin axis (many points map to
+    // implausibly large m/z once calibrated - see
+    // `raw::ttfl::Calibration::mz`'s doc comment on the noise-tail
+    // caveat), so this deliberately does not assert a bound on *every*
+    // peak. Restricted to each scan's single highest-intensity peak (a
+    // proxy for "the most likely real ion in this scan"), the great
+    // majority should fall in a plausible small-molecule/metabolite
+    // range - this was independently verified against real corpus data
+    // during the calibration's derivation (base peaks predominantly
+    // <2000 Da, see docs/format/03-lcd-ttfl-msdata.md section 3c).
+    let Some(mut reader) = open_or_skip(&ttfl_fixture()) else {
+        return;
+    };
+    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let base_peaks: Vec<f64> = spectra
+        .iter()
+        .filter_map(|s| {
+            s.intensity
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                .map(|(i, _)| s.mz[i])
+        })
+        .collect();
+    assert!(!base_peaks.is_empty());
+
+    let plausible = base_peaks.iter().filter(|&&mz| mz < 20_000.0).count();
+    let fraction = plausible as f64 / base_peaks.len() as f64;
+    assert!(
+        fraction > 0.8,
+        "only {:.1}% of base peaks fell under 20,000 Da ({} of {})",
+        fraction * 100.0,
+        plausible,
+        base_peaks.len()
+    );
 }

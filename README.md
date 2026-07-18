@@ -15,11 +15,11 @@ reverse-engineered with no Shimadzu SDK or software dependency.
 
 A Rust reader (`crates/openszraw`) implements all three confirmed raw
 data variants: `.qgd` GC-MS (full-scan profile and MRM/targeted), `.lcd`
-IT-TOF (run-length-encoded profile spectra over a raw, uncalibrated
-time-bin axis), and `.lcd` QTOF (centroid). See `docs/format/` for the
-byte-level format specs and `docs/format/06-known-limitations.md` for
-what is deliberately not yet resolved (TOF calibration, some MS2
-precursor m/z values). Python bindings (`crates/openszraw-py`) mirror
+IT-TOF (run-length-encoded profile spectra, calibrated to physical m/z
+via the file's own embedded TOF tuning data), and `.lcd` QTOF (centroid).
+See `docs/format/` for the byte-level format specs and
+`docs/format/06-known-limitations.md` for what is deliberately not yet
+resolved (per-channel polarity, some MS2 precursor m/z values). Python bindings (`crates/openszraw-py`) mirror
 the Rust API; neither the Rust crate nor the Python package has been
 published (crates.io / PyPI) yet. Not yet wired into
 [openmassspec-io](https://github.com/Sigilweaver/OpenMassSpec) as a

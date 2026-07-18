@@ -6,8 +6,8 @@ sidebar_position: 4
 
 ## Status: Partial
 
-Payload run-length encoding: confirmed. Scan metadata prefix and
-channel-to-m/z calibration: still open.
+Payload run-length encoding: confirmed. Index-to-m/z calibration:
+confirmed. Scan metadata prefix: still open.
 
 The `TTFL Raw Data` storage in IT-TOF `.lcd` files holds the primary
 mass-spectrometry data. It uses an indexing scheme built around 4
@@ -62,16 +62,44 @@ from two accessions - 109,336 scans total, 100% clean. The reconstructed
 position axis can reach values in the hundreds of thousands for some
 scans, so the reader does not clamp or assume any upper bound on it.
 
+## Index-to-m/z calibration (confirmed)
+
+The RLE payload's reconstructed position is a raw digitizer/TOF time-bin
+index. The reader converts it to physical m/z using a per-file
+calibration parsed from `TTFL Tuning/Tuning Result NN`: this stream
+stores a reference calibrant mass ladder (identified as sodium formate
+cluster ions, `[Na(HCOONa)n]+` - a standard, publicly documented ESI
+calibration solution, identified by its exact spacing matching integer
+multiples of the public monoisotopic mass of `HCOONa`) alongside its
+measured flight times. Fitting the standard TOF flight-time law
+`time = a*sqrt(mz) + b` by least squares gives a residual at the level
+of floating-point round-trip noise (about 1 part in a million) across
+every IT-TOF file in the local corpus, with only 4 distinct `(a, b)`
+pairs across 81 files - consistent with a handful of real per-instrument
+tuning sessions, not coincidence.
+
+Since vendor software cannot be used to check this (per this project's
+clean-room policy), the evidence that this also calibrates the RLE
+payload's own index axis is independent and internal: applying it to
+real scan data recovers plausible small-molecule m/z for the bulk of
+real signal, and - most convincingly - the theoretical sodium formate
+cluster masses recur at a tightly clustered predicted index position
+(within a few index units, well under 0.1 Da) across dozens of
+independent scans spanning an entire run, concentrated in the channel
+pair independently expected to be positive polarity. See
+[`docs/format/03-lcd-ttfl-msdata.md`](https://github.com/Sigilweaver/OpenSZRaw/blob/main/docs/format/03-lcd-ttfl-msdata.md)
+section 3c for the full derivation.
+
+Applying the calibration to the rare, very large noise-tail index values
+(into the hundreds of thousands) yields implausibly large m/z - this
+reflects those positions being electronic noise, not a flaw in the
+calibration; the reader does not filter or clamp them.
+
 ## Not yet resolved
 
 - **Scan metadata prefix**: the bytes before the RLE tail (~194 bytes in
   most scans, more when extra MS/MS precursor metadata is present) are
-  not decoded. A run of fixed-looking coefficients that could plausibly
-  be a TOF calibration polynomial has been observed but not confirmed.
-- **Channel-index-to-m/z calibration**: the RLE stream's position axis
-  is very likely a raw digitizer/TOF time-bin index, not m/z directly.
-  No calibration table has been located; `TTFL Instrument Param/MS
-  Parameter` and `TTFL Tuning/*` are the natural next place to look.
+  not decoded.
 - **Per-channel polarity/MS-level**: not resolved - see
   [Known limitations](./known-limitations).
 

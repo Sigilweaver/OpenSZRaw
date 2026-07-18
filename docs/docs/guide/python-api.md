@@ -47,9 +47,9 @@ for i in range(reader.scan_count):
 | `retention_time_sec`  | `float`       | Retention time in seconds            |
 
 `len(spectrum)` returns the peak count. For `.lcd` IT-TOF files, `mz` is
-currently a raw, uncalibrated time-bin index rather than physical m/z;
-for `.lcd` QTOF MS2 spectra, precursor m/z is not yet populated. See
-[Scan data](./scan-data) for the details and the current
+calibrated physical m/z (derived from the file's own embedded TOF tuning
+data); for `.lcd` QTOF MS2 spectra, precursor m/z is not yet populated.
+See [Scan data](./scan-data) for the details and the current
 [known limitations](../format/known-limitations).
 
 ```python

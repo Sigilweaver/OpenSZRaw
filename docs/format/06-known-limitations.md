@@ -8,31 +8,54 @@ guessed or fabricated. See the sibling projects' equivalent docs (e.g.
 OpenSXRaw's legacy-TOF calibration gap, OpenARaw's
 `docs/format/06-known-limitations.md`) for the precedent this follows.
 
-## 1. IT-TOF (`.lcd` TTFL): the reconstructed axis is a raw, uncalibrated time-bin index, not m/z
+## 1. IT-TOF (`.lcd` TTFL): index-to-m/z calibration (RESOLVED - see docs/format/03 section 3c)
 
-`docs/format/03-lcd-ttfl-msdata.md` documents the RLE payload's implicit
-index axis as "very likely raw digitizer/TOF channel number," with no
-calibration formula located. This session did not find one either -
-`TTFL Instrument Param/MS Parameter` and `TTFL Tuning/*` streams exist in
-every file and are the natural next place to look, but were not opened
-this session (out of scope: the task was to ship a correct, honest
-reader, not resolve every open format question).
+**Resolves Sigilweaver/OpenSZRaw#1.** A prior session left the RLE
+payload's index axis uncalibrated ("very likely raw digitizer/TOF
+channel number", per `docs/format/03-lcd-ttfl-msdata.md`). This session
+located and verified the file's own embedded calibration:
+`TTFL Tuning/Tuning Result NN` stores a reference calibrant mass ladder
+(identified as sodium formate cluster ions, a standard public ESI
+calibration solution) and its measured flight times, which fit the
+standard TOF law `time = a*sqrt(mz) + b` to ~1e-6 relative residual in
+every one of 81 locally available IT-TOF files. See
+`docs/format/03-lcd-ttfl-msdata.md` section 3c for the full derivation,
+per-file `(a, b)` values, and the evidence that this also calibrates the
+RLE payload's own index axis (order-of-magnitude match, plausible real-ion
+m/z, and - most convincingly - a known calibrant background ion
+recurring at a stable, tightly-clustered predicted index position across
+dozens of scans, concentrated in the channel pair independently expected
+to be positive polarity).
 
-`crates/openszraw::reader::ttfl_spectra` populates `SpectrumRecord::mz`
-with this raw index directly (as `f64`), with a doc comment at the call
-site making clear it is not calibrated m/z. This mirrors OpenSXRaw's
-documented precedent for its own legacy-TOF uncalibrated-bin case
-(`docs/format/04-legacy-wiff-calibration.md` / README: "m/z values are
-raw, uncalibrated time-bin integers").
+`crates/openszraw::reader::ttfl_spectra` now populates
+`SpectrumRecord::mz` with `raw::ttfl::Calibration::mz(index)` when a
+calibration was found (the common case), falling back to the raw,
+uncalibrated index only if no `TTFL Tuning/Tuning Result NN` stream with
+a usable calibration table is present in a given file - this has not
+been observed in the local corpus, but the fallback is kept rather than
+assuming every future file will carry one.
+
+**What remains open**: the calibration's functional form and per-file
+constants are confirmed to very high confidence (residual at
+floating-point-noise level against the file's own reference masses,
+correctly and stably localizing a known calibrant ion across an entire
+run), but a small constant index-origin offset between the RLE payload's
+own index convention and the tuning stream's time convention has not
+been independently ruled out - see the "noise-tail caveat" in
+`docs/format/03-lcd-ttfl-msdata.md` section 3c. Applying the calibration
+to the rare, very large noise-tail index values documented below (up to
+576,297) yields implausibly large m/z; this reflects those index
+positions being electronic noise rather than real ions, not a flaw in
+the calibration, and this crate does not filter or clamp them (that is
+downstream peak-picking's job).
 
 **Addendum to docs/format/03's magnitude estimate**: that doc
 characterizes `total_span` (the highest reconstructed position) as
 running "in the few-thousand to tens-of-thousands range." Corpus-wide
-verification this session found real scans in
-`PXD020792/UY02-01-01p400.LCD` reaching a time-bin index of **576,297**
-- almost an order of magnitude past "tens of thousands." The doc's
-estimate was apparently based on a smaller sample; this reader does not
-assume any upper bound on the index value.
+verification found real scans in `PXD020792/UY02-01-01p400.LCD` reaching
+a time-bin index of **576,297** - almost an order of magnitude past
+"tens of thousands." This reader does not assume any upper bound on the
+index value.
 
 ## 1b. IT-TOF (`.lcd` TTFL): `Data Index` entry_i and block-count assumptions were both wrong on a second accession
 

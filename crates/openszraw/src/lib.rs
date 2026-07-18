@@ -7,8 +7,9 @@
 //!   profile spectra and MRM/targeted transitions, see
 //!   `docs/format/02-gcms-qgd-scans.md`.
 //! - `.lcd` LabSolutions LC-MS, IT-TOF family (`TTFL Raw Data` storage) -
-//!   run-length-encoded sparse profile spectra over a raw, uncalibrated
-//!   time-bin axis, see `docs/format/03-lcd-ttfl-msdata.md` and
+//!   run-length-encoded sparse profile spectra, calibrated to physical
+//!   m/z from the file's own embedded TOF tuning data, see
+//!   `docs/format/03-lcd-ttfl-msdata.md` and
 //!   `docs/format/06-known-limitations.md`.
 //! - `.lcd` LabSolutions LC-MS, QTOF family (`QTFL RawData` storage) -
 //!   calibrated centroid spectra, see `docs/format/05-qtfl-centroid.md`.

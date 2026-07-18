@@ -11,24 +11,31 @@ things silently guessed or fabricated. See the sibling readers'
 equivalent pages (e.g. OpenSXRaw's legacy-TOF calibration gap) for the
 precedent this follows.
 
-## IT-TOF (`.lcd` TTFL): m/z is a raw, uncalibrated time-bin index
+## IT-TOF (`.lcd` TTFL): m/z calibration
 
 The reconstructed index axis from the run-length-encoded payload (see
-[LC-MS IT-TOF](./lcd-ittof)) is very likely a raw digitizer/TOF channel
-number, not physical m/z. No calibration formula has been located.
-`TTFL Instrument Param/MS Parameter` and `TTFL Tuning/*` streams exist
-in every file and are the natural next place to look, but have not been
-opened yet.
+[LC-MS IT-TOF](./lcd-ittof)) is a raw digitizer/TOF time-bin index. The
+reader converts it to physical m/z using a per-file calibration parsed
+from the file's own `TTFL Tuning/Tuning Result NN` stream: a reference
+calibrant mass ladder (identified as sodium formate cluster ions, a
+standard public ESI calibration solution) paired with measured flight
+times, fit to the standard TOF law `time = a*sqrt(mz) + b` by least
+squares. This fits to a residual at the level of floating-point
+round-trip noise across every IT-TOF file in the local corpus - see the
+repository's `docs/format/03-lcd-ttfl-msdata.md` section 3c for the full
+derivation and evidence.
 
-The reader populates `mz` with this raw index directly (as `f64`), with
-a doc comment at the call site making clear it is not calibrated m/z.
-This mirrors OpenSXRaw's own documented precedent for its legacy-TOF
-uncalibrated-bin case.
+If a file has no readable calibration table, the reader falls back to
+the raw, uncalibrated index rather than fabricate one - this has not
+been observed in the local corpus.
 
 The reconstructed index can reach values well past what might seem like
 a reasonable upper bound for a time-bin axis (into the hundreds of
-thousands in some real corpus scans), so the reader does not clamp or
-validate it against any assumed range.
+thousands in some real corpus scans); under calibration this maps to
+implausibly large m/z, reflecting those positions being electronic
+noise rather than real ions. The reader does not clamp, filter, or
+validate the index against any assumed range - that is downstream
+peak-picking's job.
 
 ## IT-TOF (`.lcd` TTFL): per-channel polarity/MS-level is not resolved
 

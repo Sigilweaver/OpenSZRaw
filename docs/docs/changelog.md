@@ -14,8 +14,8 @@ Not yet published to crates.io or PyPI.
 
 - Initial Rust reader (`openszraw`) for Shimadzu LabSolutions raw data,
   covering `.qgd` GC-MS (full-scan profile and MRM/targeted
-  acquisition), `.lcd` IT-TOF (run-length-encoded profile spectra over a
-  raw, uncalibrated time-bin axis), and `.lcd` QTOF (centroid).
+  acquisition), `.lcd` IT-TOF (run-length-encoded profile spectra,
+  calibrated to physical m/z), and `.lcd` QTOF (centroid).
 - Full CFBF/OLE2 stream catalog and per-format payload decoding,
   documented in [Format specification](./format/overview).
 - `examples/corpus_scan.rs` for running the reader across a full local
@@ -24,10 +24,15 @@ Not yet published to crates.io or PyPI.
   `RawReader` and `Spectrum` to mirror the sibling readers' Python API
   (see [Python API](./guide/python-api)). Not yet packaged for PyPI.
 
+### Fixed
+
+- IT-TOF (`.lcd` TTFL) `mz` now reports calibrated physical m/z instead
+  of the raw digitizer/time-bin index, using a per-file calibration
+  parsed from the file's own `TTFL Tuning/Tuning Result NN` stream. See
+  [Format specification](./format/lcd-ittof) for the derivation.
+
 ### Known limitations
 
-- IT-TOF m/z values are a raw, uncalibrated time-bin index, not
-  physical m/z - no calibration formula has been located yet.
 - IT-TOF per-channel polarity/MS-level is not resolved; every TTFL
   spectrum reports `ms_level = 1` and `polarity = None`.
 - QTOF MS2 spectra carry a precursor reference but not a decoded
