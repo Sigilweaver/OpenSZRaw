@@ -44,7 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.qgd` polarity is not populated; no polarity bit has been found in
   the scan header or `Spectrum Index` stream.
 - PDA/chromatogram stream decoding (bit-packed delta encoding) is not
-  yet solved.
+  yet solved. The segment envelope around each undecoded body is now
+  confirmed (see `docs/format/04-lcd-chromatogram-pda.md`), and several
+  additional value-encoding hypotheses were tried and ruled out, but the
+  per-point payload itself remains open (Sigilweaver/OpenSZRaw#2).
 
 See [docs/format/06-known-limitations.md](docs/format/06-known-limitations.md)
 for the full detail behind each of these.
