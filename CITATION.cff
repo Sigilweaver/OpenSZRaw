@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+title: "OpenSZRaw: A pure-Rust reader for Shimadzu LabSolutions .lcd / .qgd mass-spectrometry files"
+message: >
+  If you use OpenSZRaw in your research, please cite it using the metadata
+  below. Citation is encouraged and appreciated but not legally required.
+type: software
+authors:
+  - family-names: Riley
+    given-names: Nathan
+    orcid: "https://orcid.org/0009-0004-1579-7312"
+    website: "https://github.com/Sigilweaver"
+repository-code: "https://github.com/Sigilweaver/OpenSZRaw"
+url: "https://sigilweaver.app"
+abstract: >
+  OpenSZRaw is a standalone, cross-platform reader for Shimadzu
+  LabSolutions mass-spectrometry data files, implemented in pure Rust
+  with no dependency on Shimadzu SDKs or software. It covers `.qgd`
+  GC-MS data (both full-scan profile and MRM/targeted acquisition) and
+  `.lcd` LC-MS data across both IT-TOF (run-length-encoded profile
+  spectra) and QTOF (centroid) instrument families. IT-TOF m/z
+  calibration and PDA/chromatogram stream decoding remain open,
+  documented limitations.
+license: "Apache-2.0"
+license-url: "https://github.com/Sigilweaver/OpenSZRaw/blob/main/LICENSE"
+version: "0.1.0"
+keywords:
+  - mass spectrometry
+  - metabolomics
+  - Shimadzu
+  - lcd
+  - qgd
+  - bioinformatics
+  - Rust

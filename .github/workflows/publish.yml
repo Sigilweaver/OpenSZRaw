@@ -1,0 +1,30 @@
+# Publish OpenSZRaw to crates.io on a version tag push.
+#
+# No PyPI job yet: Python bindings (crates/openszraw-py) are not
+# implemented (Phase 5, not started). Add build-wheels/build-sdist/
+# pypi-publish jobs here once that crate exists, mirroring the sibling
+# readers' publish.yml.
+
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish -p openszraw
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
