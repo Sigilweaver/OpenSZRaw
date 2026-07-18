@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `RunMetadata::start_timestamp` is now populated for all three on-disk
+  variants (`.qgd`, `.lcd` IT-TOF, `.lcd` QTOF), sourced from the CFBF
+  container's own per-entry directory creation timestamps rather than
+  the `\x05SummaryInformation` stream (which `.lcd`/`.qgd` don't carry -
+  see `docs/format/06-known-limitations.md` #9). Resolves
+  Sigilweaver/OpenSZRaw#9.
+
 ## [0.1.0] - 2026-07-18
 
 ### Added

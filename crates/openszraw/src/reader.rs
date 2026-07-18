@@ -66,6 +66,12 @@ pub struct Reader {
     pub stem: String,
     variant: Variant,
     decoded: Decoded,
+    /// Earliest non-zero CFBF directory-entry creation timestamp in the
+    /// container, RFC 3339 UTC - see `raw::timestamp` for how and why this
+    /// is a reliable acquisition-start proxy. `None` only if every entry in
+    /// the container (implausible for any real file) has an unset creation
+    /// time.
+    start_timestamp: Option<String>,
 }
 
 fn parse_u32_array(data: &[u8]) -> Vec<u32> {
@@ -93,6 +99,8 @@ impl Reader {
             .map_err(|e| crate::Error::Parse(format!("not a valid OLE2/CFBF container: {e}")))?;
 
         let variant = raw::detect_variant(&ext_lower, &mut comp)?;
+
+        let start_timestamp = raw::timestamp::earliest_created_timestamp(&mut comp);
 
         let stem = path
             .file_stem()
@@ -147,6 +155,7 @@ impl Reader {
             stem,
             variant,
             decoded,
+            start_timestamp,
         })
     }
 }
@@ -398,7 +407,7 @@ impl SpectrumSource for Reader {
                 instrument: CvTerm::new("MS:1000124", "Shimadzu instrument model"),
                 software_name: "openszraw".to_string(),
                 software_version: env!("CARGO_PKG_VERSION").to_string(),
-                start_timestamp: None,
+                start_timestamp: self.start_timestamp.clone(),
                 mobility_array_kind: None,
             },
             Variant::Qtfl => RunMetadata {
@@ -416,7 +425,7 @@ impl SpectrumSource for Reader {
                 instrument: CvTerm::new("MS:1002998", "LCMS-9030"),
                 software_name: "openszraw".to_string(),
                 software_version: env!("CARGO_PKG_VERSION").to_string(),
-                start_timestamp: None,
+                start_timestamp: self.start_timestamp.clone(),
                 mobility_array_kind: None,
             },
             Variant::Ttfl => RunMetadata {
@@ -429,7 +438,7 @@ impl SpectrumSource for Reader {
                 instrument: CvTerm::new("MS:1000604", "LCMS-IT-TOF"),
                 software_name: "openszraw".to_string(),
                 software_version: env!("CARGO_PKG_VERSION").to_string(),
-                start_timestamp: None,
+                start_timestamp: self.start_timestamp.clone(),
                 mobility_array_kind: None,
             },
         }
