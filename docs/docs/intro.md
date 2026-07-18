@@ -46,11 +46,10 @@ from the filename or extension alone.
 
 ## Status
 
-Published on crates.io and PyPI as `openszraw`, v0.1.0. OpenSZRaw is
-not yet wired into
-[openmassspec-io](https://github.com/Sigilweaver/OpenMassSpec) as a
-`shimadzu` feature. See [Install](./install) for how to add it to your
-project today.
+Published on crates.io and PyPI as `openszraw`, v0.1.0. Wired into
+[openmassspec-io](https://github.com/Sigilweaver/OpenMassSpec) 1.5.0+
+as a `shimadzu` feature. See [Install](./install) for how to add it to
+your project today.
 
 ## Next steps
 

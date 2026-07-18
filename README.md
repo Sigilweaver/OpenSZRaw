@@ -21,9 +21,9 @@ via the file's own embedded TOF tuning data), and `.lcd` QTOF (centroid).
 See `docs/format/` for the byte-level format specs and
 `docs/format/06-known-limitations.md` for what is deliberately not yet
 resolved (per-channel polarity, some MS2 precursor m/z values). Python
-bindings (`crates/openszraw-py`) mirror the Rust API. Not yet wired
-into [openmassspec-io](https://github.com/Sigilweaver/OpenMassSpec) as
-a `shimadzu` feature. See the sourcing strategy in the ops repo's
+bindings (`crates/openszraw-py`) mirror the Rust API. Wired into
+[openmassspec-io](https://github.com/Sigilweaver/OpenMassSpec) 1.5.0+
+as a `shimadzu` feature. See the sourcing strategy in the ops repo's
 [SCOPING_PLAN.md](https://github.com/Sigilweaver/ops/blob/main/SCOPING_PLAN.md)
 and this repo's `re/ROADMAP.md` (local-only, gitignored) for the current
 phase.
