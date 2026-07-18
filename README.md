@@ -13,8 +13,14 @@ reverse-engineered with no Shimadzu SDK or software dependency.
 
 ## Status
 
-Corpus-acquisition stage. There is no parser yet. See the sourcing
-strategy in the ops repo's
+A Rust reader (`crates/openszraw`) implements all three confirmed raw
+data variants: `.qgd` GC-MS (full-scan profile and MRM/targeted), `.lcd`
+IT-TOF (run-length-encoded profile spectra over a raw, uncalibrated
+time-bin axis), and `.lcd` QTOF (centroid). See `docs/format/` for the
+byte-level format specs and `docs/format/06-known-limitations.md` for
+what is deliberately not yet resolved (TOF calibration, some MS2
+precursor m/z values). Python bindings are not yet implemented. See the
+sourcing strategy in the ops repo's
 [SCOPING_PLAN.md](https://github.com/Sigilweaver/ops/blob/main/SCOPING_PLAN.md)
 and this repo's `re/ROADMAP.md` (local-only, gitignored) for the current
 phase.
