@@ -358,10 +358,7 @@ impl SpectrumSource for Reader {
                 // descriptive name, matching how other vendor crates in
                 // this suite handle CV gaps (e.g. openaraw's generic
                 // Agilent instrument fallback).
-                source_file_format: CvTerm::new(
-                    "MS:1000560",
-                    "Shimadzu GCMSsolution QGD format",
-                ),
+                source_file_format: CvTerm::new("MS:1000560", "Shimadzu GCMSsolution QGD format"),
                 native_id_format: CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
                 instrument: CvTerm::new("MS:1000124", "Shimadzu instrument model"),
                 software_name: "openszraw".to_string(),

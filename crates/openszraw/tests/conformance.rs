@@ -63,7 +63,10 @@ fn qgd_profile_peaks_are_plausible() {
     assert!(spectra.iter().all(|s| s.ms_level == 1));
 
     let with_peaks: Vec<_> = spectra.iter().filter(|s| !s.mz.is_empty()).collect();
-    assert!(!with_peaks.is_empty(), "expected at least one spectrum with peaks");
+    assert!(
+        !with_peaks.is_empty(),
+        "expected at least one spectrum with peaks"
+    );
 
     // GC-MS EI full-scan m/z is typically in the tens-to-low-hundreds Da
     // range (this reference file's first scan example in
@@ -111,7 +114,9 @@ fn qgd_mrm_transitions_are_plausible() {
     let spectra: Vec<_> = reader.iter_spectra().collect();
     assert!(!spectra.is_empty());
     assert!(spectra.iter().all(|s| s.ms_level == 2));
-    assert!(spectra.iter().all(|s| s.mz.len() == 1 && s.intensity.len() == 1));
+    assert!(spectra
+        .iter()
+        .all(|s| s.mz.len() == 1 && s.intensity.len() == 1));
 
     for s in &spectra {
         let precursor = s
@@ -152,7 +157,10 @@ fn qtfl_centroid_mz_is_plausible_and_has_ms2() {
     let has_ms1 = spectra.iter().any(|s| s.ms_level == 1);
     let has_ms2 = spectra.iter().any(|s| s.ms_level == 2);
     assert!(has_ms1, "expected at least one MS1 (event_id==1) scan");
-    assert!(has_ms2, "expected at least one MS2 (event_id>1) scan - see docs/format/05 addendum");
+    assert!(
+        has_ms2,
+        "expected at least one MS2 (event_id>1) scan - see docs/format/05 addendum"
+    );
 
     let with_peaks: Vec<_> = spectra.iter().filter(|s| !s.mz.is_empty()).collect();
     assert!(!with_peaks.is_empty());

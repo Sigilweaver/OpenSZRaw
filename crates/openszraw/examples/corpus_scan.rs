@@ -80,7 +80,10 @@ fn main() {
             Err(e) => {
                 fail_count += 1;
                 println!("OPEN FAIL: {e}");
-                failures.push((format!("{accession}/{file_name}"), format!("open error: {e}")));
+                failures.push((
+                    format!("{accession}/{file_name}"),
+                    format!("open error: {e}"),
+                ));
             }
         }
     }
