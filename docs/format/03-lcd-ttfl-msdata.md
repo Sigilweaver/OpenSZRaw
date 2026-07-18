@@ -256,3 +256,14 @@ Scripts: `re/src/analysis/ttfl_reconfirm.py`,
 `re/src/analysis/ttfl_rle_decode.py` (the reference decoder),
 `re/src/analysis/ttfl_rle_verify.py` (corpus-wide verification),
 `re/src/analysis/ttfl_rle_trace.py`, `re/src/analysis/ttfl_prefix_probe.py`.
+
+## Addendum (Phase 4 implementation session): `total_span` magnitude estimate was too low
+
+Section 3c above estimates `total_span` as running "in the few-thousand
+to tens-of-thousands range." Rust-side corpus verification this session
+found real scans in `PXD020792/UY02-01-01p400.LCD` reaching a
+reconstructed time-bin index of **576,297** - well past "tens of
+thousands." The RLE decode itself is unaffected (it does not depend on
+any assumed upper bound), but `crates/openszraw` does not clamp or
+validate the index axis against this doc's estimate for exactly that
+reason. See `docs/format/06-known-limitations.md` section 1.

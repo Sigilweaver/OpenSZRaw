@@ -66,3 +66,28 @@ Detected in files like PXD034978 (u64 index). This mode represents targeted acqu
     * *Fallback Approach*: By observing the byte size of the payload (e.g., `Data Bytes`) and dividing by the number of transitions known for that event (or by testing divisibility by 6, 7, and 8), a parser can securely auto-detect the intensity width per Event ID on the fly.
 - **m/z Decoding**: Both precursor and product m/z values are encoded as `u16` (`m/z * 10`). For example, `3202` corresponds to `320.2 Da`.
 - **Observation**: Certain high-precision intensity values (like those in Event 101) can appear constant (e.g., `0x807FB314`), potentially indicating detector saturation, an error code, or an inactive channel for that specific transition.
+
+## Addendum (Phase 4 implementation session): the header already gives the transition count directly
+
+The "Fallback Approach" above (dividing by 6/7/8 and hoping for a unique
+fit) turned out to be unnecessary: offset `0x1A` (the table's
+"N_Peaks / Event ID" slot) is literally `n_transitions` for Variant B,
+not just an alternate Event ID reading. Verified against
+`PXD034978/49_27a__8122021_11.qgd`: for events 101/102/103, `0x1A` reads
+back `2` in every scan, and `data_bytes / 2 - 4` reproduces the doc's
+own per-event widths exactly (event 101 -> 4 bytes, 102 -> 2 bytes,
+103 -> 3 bytes). This is used directly in
+`crates/openszraw::raw::qgd::parse_scan` instead of the blind-divisibility
+search, which is both simpler and free of the ambiguity the divisibility
+approach could hit (e.g. a `data_bytes` divisible by more than one of
+6/7/8).
+
+Also worth recording: within one nominal Event ID, the *actual*
+monitored (precursor, product) pairs can differ from scan to scan (seen
+alternating between two pairs sharing a common product ion across
+consecutive scans in the reference file) - this is real MRM
+time-multiplexing across a segment with more logical transitions than
+fit in one scan's dwell cycle, not a decode error. Each scan's
+transitions are decoded independently per the layout above; no
+assumption is made that a given transition slot maps to the same
+(precursor, product) across scans.

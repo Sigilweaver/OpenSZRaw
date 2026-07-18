@@ -37,3 +37,27 @@ Immediately following the 64-byte header is the data payload, which is exactly `
 2. **Intensity Array**: `N` consecutive 16-bit LE unsigned integers (`u16`).
 
 *Example validation:* A scan with payload size `S = 160` has exactly 16 peaks. The payload consists of 16x `u64` values (128 bytes) followed by 16x `u16` values (32 bytes), perfectly accounting for the 160 bytes with zero slack.
+
+## Addendum (Phase 4 implementation session): intensity width is variable, and `event_id` encodes MS1/MS2
+
+Two corrections/additions found while implementing the Rust reader,
+verified against `MSV000084197/20190607_NM16.lcd` - see
+`docs/format/06-known-limitations.md` sections 3 and 4 for full detail:
+
+1. **Intensity is not always 16-bit.** The scan header's `u32[9]` field
+   (byte offset `0x24`) gives the intensity byte width per scan (1, 2,
+   or 4 bytes observed); `N = S / (8 + width)`, not always `S / 10`.
+   Assuming a fixed 16-bit width produces a confirmed corrupt decode on
+   higher-dynamic-range (mostly MS2) scans.
+2. **`Centroid Index`'s `u32[5]` ("Segment/Event ID") is a real
+   per-cycle MS1/MS2 counter**, not an opaque tag: `event_id == 1` is
+   the MS1 survey scan, `event_id > 1` are MS2 product-ion scans (1-4
+   per cycle observed), one per DDA-selected precursor. The real
+   precursor m/z lives in the separate, undecoded `QTFL RawData/DDA`
+   stream.
+
+The "Status: CONFIRMED" line above refers specifically to the payload
+byte-layout claim it was originally verified against (which remains
+correct for the common 16-bit-intensity case); it did not cover scan
+classification or the variable intensity width, both undiscovered at
+the time.
