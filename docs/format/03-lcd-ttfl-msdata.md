@@ -257,6 +257,34 @@ Scripts: `re/src/analysis/ttfl_reconfirm.py`,
 `re/src/analysis/ttfl_rle_verify.py` (corpus-wide verification),
 `re/src/analysis/ttfl_rle_trace.py`, `re/src/analysis/ttfl_prefix_probe.py`.
 
+## Addendum (Phase 4 implementation session): `entry_i` must be read from the subset's own field, and a trailing partial block is real
+
+Section 1 states the subset's `u32[2]` "RT entry index (0-based)...
+matches the position of this 64-byte entry in the Data Index." That
+equivalence **does not hold on every file**. Verified against
+`PXD025121/17.lcd` (a different accession from the MTBLS432 file this
+doc's Section 1 was checked against): this file's acquisition has only
+2 real interleaved channels per RT point (not 4), so each physical
+64-byte block packs *two* RT points' worth of subsets - block 0's four
+subsets carry `entry_i` values `[0, 0, 1, 1]`, block 1 carries
+`[2, 2, 3, 3]`, and so on. A reader that assumes `entry_i == block
+position` (as Section 1's wording invites) silently assigns the wrong
+retention time to every other RT point's spectra on this class of file.
+`crates/openszraw::raw::ttfl::parse_data_index` reads `entry_i` from
+each subset's own bytes rather than from its position, which is correct
+on both the 4-real-channel and 2-real-channel cases.
+
+Relatedly, the `Data Index` stream is not always an exact multiple of
+64 bytes: 9 files in `PXD025121` have a **trailing partial block** (32
+or 48 bytes - 1-3 leftover subsets) when the total real-subset count
+isn't a multiple of 4, e.g. `PXD025121/17.lcd` has 657 RT points x 2
+real channels = 1314 subsets = 328 full blocks + 1 trailing 32-byte
+block (`21024` bytes total, confirmed by reading the tail subsets: real,
+in-bounds offsets, `entry_i = 656` = the last RT index). Rejecting
+anything not an exact multiple of 64 fails to open all 9 of these real
+corpus files; the parser now accepts a trailing block whose size is any
+positive multiple of 16.
+
 ## Addendum (Phase 4 implementation session): `total_span` magnitude estimate was too low
 
 Section 3c above estimates `total_span` as running "in the few-thousand

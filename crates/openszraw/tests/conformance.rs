@@ -24,6 +24,17 @@ fn ttfl_fixture() -> PathBuf {
     PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD020792/UY02-01-01p400.LCD")
 }
 
+/// Regression fixture for the `Data Index` `entry_i`/trailing-partial-
+/// block bug fixed this session - see the addendum in
+/// `docs/format/03-lcd-ttfl-msdata.md` and
+/// `docs/format/06-known-limitations.md` section 1b. This file has only
+/// 2 real interleaved channels per RT point (packing 2 RT points per
+/// 64-byte `Data Index` block) and an odd RT-point count, producing a
+/// trailing 32-byte partial block.
+fn ttfl_partial_block_fixture() -> PathBuf {
+    PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD025121/17.lcd")
+}
+
 fn open_or_skip(path: &Path) -> Option<Reader> {
     if !path.exists() {
         eprintln!("skip: corpus not present at {}", path.display());
@@ -177,6 +188,16 @@ fn ttfl_conformance() {
     let n = assert_source_invariants(&mut reader).expect("conformance invariants failed");
     assert!(n > 0, "expected at least one spectrum");
     println!("ttfl: {n} spectra");
+}
+
+#[test]
+fn ttfl_partial_block_conformance() {
+    let Some(mut reader) = open_or_skip(&ttfl_partial_block_fixture()) else {
+        return;
+    };
+    let n = assert_source_invariants(&mut reader).expect("conformance invariants failed");
+    assert!(n > 0, "expected at least one spectrum");
+    println!("ttfl (2-channel, partial trailing block): {n} spectra");
 }
 
 #[test]

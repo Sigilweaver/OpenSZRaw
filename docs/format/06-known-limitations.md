@@ -34,6 +34,20 @@ verification this session found real scans in
 estimate was apparently based on a smaller sample; this reader does not
 assume any upper bound on the index value.
 
+## 1b. IT-TOF (`.lcd` TTFL): `Data Index` entry_i and block-count assumptions were both wrong on a second accession
+
+Found while running the full local corpus through `examples/corpus_scan.rs`
+(9 of 31 `PXD025121` files initially failed to *open* at all): the
+`Data Index` stream is not always an exact multiple of 64 bytes, and the
+subset's own `entry_i` field can differ from its physical block
+position. See the addendum in `docs/format/03-lcd-ttfl-msdata.md` for
+the full byte-level evidence (`PXD025121/17.lcd`: 2 real channels per RT
+point instead of 4, plus a trailing 32-byte partial block). Both are now
+handled correctly in `crates/openszraw::raw::ttfl::parse_data_index`;
+all 94 corpus files (31 of which are `PXD025121`) now open and pass
+`assert_source_invariants` after the fix - see the corpus-scan results
+in the Phase 4 session summary.
+
 ## 2. IT-TOF (`.lcd` TTFL): per-channel polarity/MS-level is not resolved
 
 Each RT entry's `Data Index` carries 4 interleaved "channel" subsets

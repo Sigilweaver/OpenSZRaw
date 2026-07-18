@@ -16,36 +16,75 @@ pub const SUBSET_SIZE: usize = 16;
 pub const SCAN_HEADER_SIZE: usize = 64;
 
 /// One (entry, channel) subset's byte offset into `MS Raw Data`, decoded
-/// from the `Data Index` stream (64-byte entries, 4x 16-byte subsets
+/// from the `Data Index` stream (64-byte blocks, 4x 16-byte subsets
 /// each).
 #[derive(Debug, Clone, Copy)]
 pub struct DataIndexSubset {
+    /// RT entry index (0-based), read from the subset's own `u32[2]`
+    /// field (byte offset 8) - **not** derived from the subset's
+    /// position in the stream. On 4-real-channel files (e.g. MTBLS432)
+    /// these coincide (one 64-byte block == one RT point's 4 channels,
+    /// per `docs/format/03-lcd-ttfl-msdata.md`), but on files with fewer
+    /// real channels this is not true: verified this session against
+    /// `PXD025121/17.lcd`, whose acquisition has only 2 real channels
+    /// per RT point, so each 64-byte block packs *two* consecutive RT
+    /// points' worth of subsets (block 0's four subsets carry entry_i
+    /// `[0, 0, 1, 1]`, block 1 carries `[2, 2, 3, 3]`, etc.) - reading
+    /// `entry_i` from the block position instead of the subset's own
+    /// field would silently assign the wrong retention time to every
+    /// other RT point's spectra on such files.
     pub entry_i: usize,
+    /// Position (0-3) of this subset within its 64-byte block. Not
+    /// necessarily a stable "channel identity" across the whole file on
+    /// fewer-than-4-real-channel files (see `entry_i`'s doc comment) -
+    /// kept for diagnostic purposes only.
     pub sub_i: usize,
     pub offset: u32,
 }
 
-/// Parse the `Data Index` stream into its 4-subsets-per-entry layout.
+/// Parse the `Data Index` stream into its 16-byte subset records.
+///
+/// The stream is normally `N_RT * 64` bytes (4 subsets per RT point), but
+/// a trailing **partial** final block (16, 32, or 48 bytes - 1 to 3
+/// leftover subsets) is a real, observed condition: verified against 9
+/// files in `PXD025121` this session, where a file with an odd number of
+/// RT points and 2 real channels per point packs its final RT point's 2
+/// subsets alone rather than padding to a full 64-byte block (e.g.
+/// `PXD025121/17.lcd`: 657 RT points x 2 real channels = 1314 subsets =
+/// 328 full 64-byte blocks + 1 trailing 32-byte block, `21024` bytes
+/// total). Rejecting anything not an exact multiple of 64 - as the
+/// original format doc's model implies - fails to open 9 real corpus
+/// files; this parses full blocks first, then a trailing partial block
+/// if the remainder is a positive multiple of 16.
 pub fn parse_data_index(data: &[u8]) -> crate::Result<Vec<DataIndexSubset>> {
-    if data.len() % DATA_INDEX_ENTRY_SIZE != 0 {
+    let n_full_blocks = data.len() / DATA_INDEX_ENTRY_SIZE;
+    let remainder = data.len() % DATA_INDEX_ENTRY_SIZE;
+    if remainder != 0 && remainder % SUBSET_SIZE != 0 {
         return Err(crate::Error::Parse(format!(
-            "Data Index stream size {} is not a multiple of {DATA_INDEX_ENTRY_SIZE}",
+            "Data Index stream size {} is not a whole number of {SUBSET_SIZE}-byte subsets",
             data.len()
         )));
     }
-    let n_entries = data.len() / DATA_INDEX_ENTRY_SIZE;
-    let mut subsets = Vec::with_capacity(n_entries * 4);
-    for entry_i in 0..n_entries {
-        let entry = &data[entry_i * DATA_INDEX_ENTRY_SIZE..(entry_i + 1) * DATA_INDEX_ENTRY_SIZE];
-        for sub_i in 0..4 {
-            let sub = &entry[sub_i * SUBSET_SIZE..(sub_i + 1) * SUBSET_SIZE];
+    let mut subsets = Vec::with_capacity(n_full_blocks * 4 + remainder / SUBSET_SIZE);
+    let parse_block = |block: &[u8], n_subsets: usize, subsets: &mut Vec<DataIndexSubset>| {
+        for sub_i in 0..n_subsets {
+            let sub = &block[sub_i * SUBSET_SIZE..(sub_i + 1) * SUBSET_SIZE];
             let offset = LittleEndian::read_u32(&sub[0..4]);
+            let entry_i = LittleEndian::read_u32(&sub[8..12]) as usize;
             subsets.push(DataIndexSubset {
                 entry_i,
                 sub_i,
                 offset,
             });
         }
+    };
+    for block_i in 0..n_full_blocks {
+        let block = &data[block_i * DATA_INDEX_ENTRY_SIZE..(block_i + 1) * DATA_INDEX_ENTRY_SIZE];
+        parse_block(block, 4, &mut subsets);
+    }
+    if remainder > 0 {
+        let tail = &data[n_full_blocks * DATA_INDEX_ENTRY_SIZE..];
+        parse_block(tail, remainder / SUBSET_SIZE, &mut subsets);
     }
     Ok(subsets)
 }
@@ -227,6 +266,60 @@ pub fn decode_scan(scan_bytes: &[u8]) -> Option<TtflSpectrum> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_subset(buf: &mut [u8], offset: u32, entry_i: u32, evctr: u32) {
+        LittleEndian::write_u32(&mut buf[0..4], offset);
+        LittleEndian::write_u32(&mut buf[4..8], 0);
+        LittleEndian::write_u32(&mut buf[8..12], entry_i);
+        LittleEndian::write_u32(&mut buf[12..16], evctr);
+    }
+
+    #[test]
+    fn parse_data_index_reads_entry_i_from_bytes_not_position() {
+        // One 64-byte block whose 4 subsets carry entry_i [0, 0, 1, 1] -
+        // reproduces PXD025121/17.lcd's 2-real-channel packing (two RT
+        // points' worth of subsets share one physical block).
+        let mut block = vec![0u8; 64];
+        write_subset(&mut block[0..16], 100, 0, 0);
+        write_subset(&mut block[16..32], 200, 0, 1);
+        write_subset(&mut block[32..48], 300, 1, 2);
+        write_subset(&mut block[48..64], 400, 1, 3);
+
+        let subsets = parse_data_index(&block).expect("parse");
+        assert_eq!(subsets.len(), 4);
+        assert_eq!(subsets[0].entry_i, 0);
+        assert_eq!(subsets[1].entry_i, 0);
+        assert_eq!(subsets[2].entry_i, 1);
+        assert_eq!(subsets[3].entry_i, 1);
+    }
+
+    #[test]
+    fn parse_data_index_accepts_trailing_partial_block() {
+        // Full 64-byte block (entry 0's 4 subsets) plus a trailing
+        // 32-byte partial block (2 subsets, entry 1) - reproduces the
+        // real trailing-partial-block condition found in 9 PXD025121
+        // files this session.
+        let mut data = vec![0u8; 64 + 32];
+        write_subset(&mut data[0..16], 0, 0, 0);
+        write_subset(&mut data[16..32], 10, 0, 1);
+        write_subset(&mut data[32..48], 20, 0, 2);
+        write_subset(&mut data[48..64], 30, 0, 3);
+        write_subset(&mut data[64..80], 40, 1, 4);
+        write_subset(&mut data[80..96], 50, 1, 5);
+
+        let subsets = parse_data_index(&data).expect("parse");
+        assert_eq!(subsets.len(), 6);
+        assert_eq!(subsets[4].entry_i, 1);
+        assert_eq!(subsets[4].offset, 40);
+        assert_eq!(subsets[5].entry_i, 1);
+        assert_eq!(subsets[5].offset, 50);
+    }
+
+    #[test]
+    fn parse_data_index_rejects_non_16_byte_remainder() {
+        let data = vec![0u8; 64 + 7]; // remainder not a multiple of 16
+        assert!(parse_data_index(&data).is_err());
+    }
 
     /// Reproduces the doc's canonical worked example: RT entry 0, channel
     /// 1, `6-wk_HZ_CC_male_12_65__30min_pos-neg_43.lcd`, offset 1842 -
