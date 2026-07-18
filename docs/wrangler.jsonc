@@ -1,0 +1,17 @@
+{
+    "name": "openszraw-docs",
+    "compatibility_date": "2024-11-26",
+    "assets": {
+        "directory": "./build"
+    },
+    "routes": [
+        {
+            "pattern": "sigilweaver.app/openszraw/docs",
+            "zone_name": "sigilweaver.app"
+        },
+        {
+            "pattern": "sigilweaver.app/openszraw/docs/*",
+            "zone_name": "sigilweaver.app"
+        }
+    ]
+}
