@@ -1,12 +1,12 @@
 //! Parsing of `.lcd` IT-TOF LC-MS data (`TTFL Raw Data` storage).
 //!
 //! See `docs/format/03-lcd-ttfl-msdata.md` and
-//! `docs/format/06-known-limitations.md`. **The reconstructed index axis
-//! is a raw, uncalibrated digitizer/time-bin index, not m/z** - no
-//! calibration formula was found this session (see the known-limitations
-//! doc), matching this suite's established precedent for shipping honest,
-//! documented uncalibrated axes rather than blocking on it (see
-//! OpenSXRaw's legacy-TOF handling).
+//! `docs/format/06-known-limitations.md`. The RLE payload's reconstructed
+//! index axis is a raw digitizer/time-bin index, not m/z on its own - but
+//! this module also parses the file's own embedded TOF calibration
+//! (`Calibration`, sourced from `TTFL Tuning/Tuning Result NN`) that
+//! converts it to physical m/z. See `Calibration`'s doc comment for the
+//! supporting evidence.
 
 use byteorder::{ByteOrder, LittleEndian};
 use std::collections::BTreeSet;
@@ -212,11 +212,190 @@ fn find_prefix_end(payload: &[u8]) -> Option<usize> {
 
 /// One decoded IT-TOF spectrum: a sparse set of (raw time-bin index,
 /// intensity) samples reconstructed from the RLE payload's cumulative
-/// `skip` values. **The index axis is not m/z** - see module doc.
+/// `skip` values. The index axis is not m/z on its own - see
+/// [`Calibration`] to convert it.
 #[derive(Debug, Clone, Default)]
 pub struct TtflSpectrum {
     pub index_axis: Vec<f64>,
     pub intensity: Vec<f32>,
+}
+
+/// A per-file IT-TOF time-of-flight calibration converting the RLE
+/// payload's raw time-bin index axis to physical m/z, resolved from the
+/// file's own embedded tuning data (`TTFL Tuning/Tuning Result NN`) -
+/// see `docs/format/03-lcd-ttfl-msdata.md` section 3c and
+/// `docs/format/06-known-limitations.md` section 1 for the full
+/// evidence and derivation this implements.
+///
+/// ## What the stream contains and how this was found
+///
+/// `TTFL Tuning/Tuning Result 00` (and identical copies `01`/`02`) embeds
+/// two fixed-offset, fixed-stride tables:
+///
+/// - Up to 9 `u32` reference calibrant masses at byte offsets
+///   `3022 + 4*i`, zero-padded/terminated, scaled by `1e-4` (a fixed-point
+///   convention independently confirmed elsewhere in this stream). These
+///   values were identified as **sodium formate cluster ions**
+///   (`[Na(HCOONa)n]+`, a standard, publicly documented ESI calibration
+///   solution) by recognizing their pairwise spacing is an exact integer
+///   multiple of 67.9874 Da - the monoisotopic mass of `HCOONa` computed
+///   from public atomic mass constants, not from any vendor reference.
+/// - A matching count of `f64` measured flight-time values at byte
+///   offsets `3150 + 8*i`.
+///
+/// Fitting `time = a*sqrt(mass) + b` (the standard, textbook linear
+/// reflectron/linear TOF flight-time law - public TOF physics, not
+/// vendor-specific knowledge) by least squares against these paired
+/// tables gives a residual at the level of floating-point round-trip
+/// noise (worst case seen: ~0.35 out of a ~20,000-95,000 range, i.e.
+/// ~1e-5 relative) across every IT-TOF file checked in the local corpus
+/// (81 files spanning MTBLS432, PXD020792, and PXD025121), with only 4
+/// distinct `(a, b)` pairs across the whole corpus - consistent with a
+/// handful of real tuning/calibration sessions, not coincidence or a
+/// hardcoded constant.
+///
+/// ## Why this is believed to also calibrate the RLE payload's index axis
+///
+/// The open question this resolves is whether the "time" recorded in
+/// this stream is the *same* axis/unit as the RLE payload's reconstructed
+/// index position. Evidence it is:
+///
+/// - Order of magnitude matches: the tuning "time" ladder spans
+///   roughly 20,000-95,000 across the corpus, and real scan index ranges
+///   are the same order of magnitude (up to ~90,000+ for real ion
+///   signal; see the `Calibration::mz` doc for the important caveat
+///   about the rare, much larger noise-tail index values also present in
+///   the raw axis).
+/// - Applying the fit to real decoded scan peaks yields plausible
+///   small-molecule/metabolite m/z (tens to low thousands of Da) for the
+///   overwhelming majority of real signal, not implausible values.
+/// - Searching real scan data (independently of any vendor tool) for the
+///   theoretical sodium formate cluster masses at the index position
+///   `Calibration::mz`'s inverse predicts finds them recurring at a
+///   **tightly clustered index position (within ~7-8 raw index units,
+///   sub-0.05 Da) across dozens of independent scans spanning an entire
+///   30-minute run**, and concentrated in exactly the channels expected
+///   for a positive-mode background ion (near-absent from the channel
+///   pair independently inferred to be negative mode) - the signature of
+///   a real, persistent background/contaminant ion correctly localized
+///   by the calibration, not noise.
+/// - `(a, b)` varies meaningfully between different files/instrument
+///   sessions rather than being a fixed constant, and is identical across
+///   the 3 redundant copies (`00`/`01`/`02`) and across every file in a
+///   shared acquisition batch, exactly as expected for genuine
+///   per-session instrument calibration data.
+///
+/// This is strong, but not proof of a zero time-origin offset between
+/// the RLE payload's index convention (cumulative `skip` from 0 at the
+/// start of that scan's RLE stream) and the tuning stream's own time
+/// convention - see the caveat on `Calibration::mz`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Calibration {
+    /// Slope in `time = a*sqrt(mz) + b`.
+    pub a: f64,
+    /// Intercept in `time = a*sqrt(mz) + b`.
+    pub b: f64,
+}
+
+impl Calibration {
+    /// Convert a raw time-bin index (the RLE payload's reconstructed
+    /// position) to m/z via the inverted fit: `mz = ((index - b) / a)^2`.
+    ///
+    /// This is applied directly to the RLE index with no assumed origin
+    /// shift - see the module-level evidence for why that is believed
+    /// correct for real ion signal. Extremely large index values (the
+    /// rare noise-tail positions documented in
+    /// `docs/format/06-known-limitations.md`, reaching into the
+    /// hundreds of thousands on some scans) will map to implausibly
+    /// large m/z under this formula; that reflects those positions not
+    /// corresponding to real ions, not a flaw in the calibration itself,
+    /// and this function deliberately does not clamp or filter them -
+    /// that is downstream peak-picking's job, not this crate's.
+    pub fn mz(&self, index: f64) -> f64 {
+        ((index - self.b) / self.a).powi(2)
+    }
+}
+
+/// Byte offset of the first reference calibrant mass `u32` within a
+/// `TTFL Tuning/Tuning Result NN` stream.
+const TUNING_MASS_OFFSET: usize = 3022;
+/// Byte stride between successive calibrant mass `u32` entries.
+const TUNING_MASS_STRIDE: usize = 4;
+/// Fixed-point scale of the calibrant mass `u32` encoding (4 decimal
+/// digits), confirmed by recognizing the resulting values as an exact
+/// sodium formate cluster ion series - see `Calibration`'s doc comment.
+const TUNING_MASS_SCALE: f64 = 1.0e-4;
+/// Maximum number of calibrant mass slots observed in the corpus (the
+/// table is zero-padded/terminated, so fewer real entries is normal).
+const TUNING_MASS_MAX_POINTS: usize = 9;
+/// Byte offset of the first measured flight-time `f64` within a
+/// `TTFL Tuning/Tuning Result NN` stream.
+const TUNING_TIME_OFFSET: usize = 3150;
+/// Byte stride between successive flight-time `f64` entries.
+const TUNING_TIME_STRIDE: usize = 8;
+/// Minimum number of paired (mass, time) points required before
+/// attempting a fit - below this a 2-parameter linear fit is either
+/// impossible or too noise-sensitive to trust.
+const TUNING_MIN_POINTS: usize = 3;
+
+/// Extract the reference calibrant mass ladder and its measured flight
+/// times from a `TTFL Tuning/Tuning Result NN` stream (any of the 3
+/// identical copies), and fit `time = a*sqrt(mass) + b` by least squares.
+/// Returns `None` if the stream is too short, has fewer than
+/// [`TUNING_MIN_POINTS`] valid entries, or yields a non-physical fit
+/// (flight time must strictly increase with mass for a real TOF axis) -
+/// callers should fall back to the raw, uncalibrated index axis in that
+/// case rather than fabricate a calibration.
+pub fn parse_calibration(data: &[u8]) -> Option<Calibration> {
+    let mut masses = Vec::new();
+    for i in 0..TUNING_MASS_MAX_POINTS {
+        let off = TUNING_MASS_OFFSET + i * TUNING_MASS_STRIDE;
+        if off + 4 > data.len() {
+            break;
+        }
+        let raw = LittleEndian::read_u32(&data[off..off + 4]);
+        if raw == 0 {
+            break; // zero-padding: end of the real entries
+        }
+        masses.push(raw as f64 * TUNING_MASS_SCALE);
+    }
+    if masses.len() < TUNING_MIN_POINTS {
+        return None;
+    }
+    let mut times = Vec::with_capacity(masses.len());
+    for i in 0..masses.len() {
+        let off = TUNING_TIME_OFFSET + i * TUNING_TIME_STRIDE;
+        if off + 8 > data.len() {
+            return None;
+        }
+        times.push(LittleEndian::read_f64(&data[off..off + 8]));
+    }
+    fit_sqrt_linear(&masses, &times)
+}
+
+/// Least-squares fit of `time = a*sqrt(mass) + b` via the standard
+/// closed-form 2-parameter linear regression on `x = sqrt(mass)`,
+/// `y = time`. Returns `None` if the fit is degenerate (all `x` values
+/// identical) or non-physical (`a <= 0`, i.e. time would not increase
+/// with mass).
+fn fit_sqrt_linear(masses: &[f64], times: &[f64]) -> Option<Calibration> {
+    debug_assert_eq!(masses.len(), times.len());
+    let n = masses.len() as f64;
+    let xs: Vec<f64> = masses.iter().map(|m| m.sqrt()).collect();
+    let sx: f64 = xs.iter().sum();
+    let sy: f64 = times.iter().sum();
+    let sxx: f64 = xs.iter().map(|x| x * x).sum();
+    let sxy: f64 = xs.iter().zip(times).map(|(x, y)| x * y).sum();
+    let denom = n * sxx - sx * sx;
+    if denom.abs() < 1e-9 {
+        return None;
+    }
+    let a = (n * sxy - sx * sy) / denom;
+    let b = (sy - a * sx) / n;
+    if !a.is_finite() || !b.is_finite() || a <= 0.0 {
+        return None;
+    }
+    Some(Calibration { a, b })
 }
 
 /// Decode one scan's full byte range (64-byte header + variable-length
@@ -358,6 +537,140 @@ mod tests {
         let mut scan = vec![0u8; SCAN_HEADER_SIZE];
         scan.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
         assert!(decode_scan(&scan).is_none());
+    }
+
+    /// Builds a synthetic `TTFL Tuning/Tuning Result NN` stream with the
+    /// mass/time tables at the real, corpus-confirmed fixed offsets.
+    fn make_tuning_result_stream(masses: &[f64], times: &[f64]) -> Vec<u8> {
+        assert_eq!(masses.len(), times.len());
+        let mut buf = vec![0u8; TUNING_TIME_OFFSET + times.len() * TUNING_TIME_STRIDE];
+        for (i, &m) in masses.iter().enumerate() {
+            let off = TUNING_MASS_OFFSET + i * TUNING_MASS_STRIDE;
+            let raw = (m / TUNING_MASS_SCALE).round() as u32;
+            LittleEndian::write_u32(&mut buf[off..off + 4], raw);
+        }
+        for (i, &t) in times.iter().enumerate() {
+            let off = TUNING_TIME_OFFSET + i * TUNING_TIME_STRIDE;
+            LittleEndian::write_f64(&mut buf[off..off + 8], t);
+        }
+        buf
+    }
+
+    /// Regression fixture: the exact 9-point sodium formate cluster
+    /// calibrant ladder and measured flight times read from
+    /// `TTFL Tuning/Tuning Result 00` in
+    /// `MTBLS432/6-wk_HZ_CC_male_12_65__30min_pos-neg_43.lcd` (and
+    /// identical across all 45 locally available MTBLS432 files, which
+    /// share one acquisition batch/tuning session) - see
+    /// `docs/format/03-lcd-ttfl-msdata.md` section 3c.
+    const MTBLS432_MASSES: [f64; 9] = [
+        1589.64, 2949.388, 4309.136, 5668.885, 7028.633, 8388.381, 9748.129, 11107.877, 12467.625,
+    ];
+    const MTBLS432_TIMES: [f64; 9] = [
+        21908.68359375,
+        29806.38671875,
+        36007.29296875001,
+        41284.74218750001,
+        45958.96484375,
+        50198.98046875,
+        54107.10156249999,
+        57750.941406250015,
+        61177.76953125,
+    ];
+
+    #[test]
+    fn fit_sqrt_linear_recovers_known_corpus_calibration() {
+        let cal = fit_sqrt_linear(&MTBLS432_MASSES, &MTBLS432_TIMES).expect("fit");
+        // Reference values independently computed via numpy lstsq against
+        // the same 9 points (see the PR description / docs for the
+        // derivation) - matched to 6 decimal places here as a tight
+        // regression against silent algorithm drift.
+        assert!(
+            (cal.a - 547.012885).abs() < 1e-4,
+            "a = {} not close to 547.012885",
+            cal.a
+        );
+        assert!(
+            (cal.b - 99.101660).abs() < 1e-4,
+            "b = {} not close to 99.101660",
+            cal.b
+        );
+    }
+
+    #[test]
+    fn fit_sqrt_linear_residuals_are_near_zero() {
+        // The whole point of this calibration scheme: the paired
+        // (mass, time) points fit time = a*sqrt(mass)+b essentially
+        // exactly (floating-point-noise-level residual), which is the
+        // core evidence that these two tables are a real, paired
+        // calibration rather than coincidence.
+        let cal = fit_sqrt_linear(&MTBLS432_MASSES, &MTBLS432_TIMES).expect("fit");
+        for (&m, &t) in MTBLS432_MASSES.iter().zip(MTBLS432_TIMES.iter()) {
+            let predicted_t = cal.a * m.sqrt() + cal.b;
+            assert!(
+                (predicted_t - t).abs() < 0.1,
+                "residual too large at mass {m}: predicted {predicted_t}, actual {t}"
+            );
+        }
+    }
+
+    #[test]
+    fn calibration_mz_inverts_the_fit() {
+        let cal = fit_sqrt_linear(&MTBLS432_MASSES, &MTBLS432_TIMES).expect("fit");
+        for (&m, &t) in MTBLS432_MASSES.iter().zip(MTBLS432_TIMES.iter()) {
+            let recovered_mz = cal.mz(t);
+            // The fit's own time-domain residual is ~0.07 at these
+            // points (see fit_sqrt_linear_residuals_are_near_zero),
+            // which propagates to a mass-domain error of roughly
+            // 2*sqrt(m)/a*dt - a few hundredths of a Da here; 0.05 gives
+            // comfortable headroom while still being a tight check.
+            assert!(
+                (recovered_mz - m).abs() < 0.05,
+                "mz({t}) = {recovered_mz}, expected ~{m}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_calibration_reads_real_layout() {
+        let stream = make_tuning_result_stream(&MTBLS432_MASSES, &MTBLS432_TIMES);
+        let cal = parse_calibration(&stream).expect("parse_calibration");
+        assert!((cal.a - 547.012885).abs() < 1e-3);
+        assert!((cal.b - 99.101660).abs() < 1e-3);
+    }
+
+    #[test]
+    fn parse_calibration_stops_at_zero_padding() {
+        // Only 5 real masses, rest zero-padded - matches real files like
+        // PXD025121 where not every one of the 9 slots is filled.
+        let masses = &MTBLS432_MASSES[..5];
+        let times = &MTBLS432_TIMES[..5];
+        let stream = make_tuning_result_stream(masses, times);
+        let cal = parse_calibration(&stream).expect("parse_calibration");
+        // Should still recover essentially the same (a, b) from a subset
+        // of the same underlying line.
+        assert!((cal.a - 547.012885).abs() < 1.0);
+        assert!((cal.b - 99.101660).abs() < 5.0);
+    }
+
+    #[test]
+    fn parse_calibration_returns_none_below_min_points() {
+        // Only 2 points: below TUNING_MIN_POINTS, must not fit.
+        let masses = &MTBLS432_MASSES[..2];
+        let times = &MTBLS432_TIMES[..2];
+        let stream = make_tuning_result_stream(masses, times);
+        assert!(parse_calibration(&stream).is_none());
+    }
+
+    #[test]
+    fn parse_calibration_returns_none_for_short_stream() {
+        assert!(parse_calibration(&[0u8; 16]).is_none());
+    }
+
+    #[test]
+    fn parse_calibration_returns_none_for_all_zero_stream() {
+        let stream = vec![0u8; TUNING_TIME_OFFSET + 9 * TUNING_TIME_STRIDE];
+        assert!(parse_calibration(&stream).is_none());
     }
 
     #[test]

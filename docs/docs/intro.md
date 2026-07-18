@@ -35,10 +35,9 @@ datasets (PRIDE, MassIVE, and MetaboLights accessions); see
 | OLE2/CFBF container (shared by all three variants)  | supported                                                       |
 | `.qgd` GC-MS, full-scan profile mode                | supported                                                       |
 | `.qgd` GC-MS, MRM/targeted mode                     | supported                                                       |
-| `.lcd` IT-TOF (run-length-encoded profile spectra)  | supported, over a raw, uncalibrated time-bin axis - see [known limitations](./format/known-limitations) |
+| `.lcd` IT-TOF (run-length-encoded profile spectra)  | supported, calibrated to physical m/z - see [known limitations](./format/known-limitations) |
 | `.lcd` QTOF / 9030 series (centroid spectra)        | supported                                                       |
 | QTOF MS2 precursor m/z (`QTFL RawData/DDA`)         | not yet decoded                                                 |
-| IT-TOF m/z calibration                              | not yet decoded - m/z is a raw time-bin index                  |
 | PDA / UV chromatogram streams                       | out of scope for this reader; encoding not decoded              |
 
 `Reader::open` (and Python's `RawReader`) auto-detects `.qgd` vs `.lcd`

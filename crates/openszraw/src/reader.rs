@@ -26,6 +26,15 @@ const TTFL_DATA_INDEX: &str = "TTFL Raw Data/Data Index";
 const TTFL_MS_RAW_DATA: &str = "TTFL Raw Data/MS Raw Data";
 const TTFL_RETENTION_TIME: &str = "TTFL Raw Data/Retention Time";
 
+/// The 3 on-disk copies of the tuning result stream that carry the
+/// index-to-m/z calibration data (see `raw::ttfl::Calibration`) - tried
+/// in order, since a file only needs one readable copy.
+const TTFL_TUNING_RESULT: [&str; 3] = [
+    "TTFL Tuning/Tuning Result 00",
+    "TTFL Tuning/Tuning Result 01",
+    "TTFL Tuning/Tuning Result 02",
+];
+
 /// Decoded state for whichever of the 3 on-disk variants this file is,
 /// plus everything needed to decode individual scans on demand.
 enum Decoded {
@@ -43,6 +52,11 @@ enum Decoded {
         subsets: Vec<ttfl::DataIndexSubset>,
         bounds: Vec<(u32, u32)>,
         retention_time_ms: Vec<u32>,
+        /// `None` when no readable `TTFL Tuning/Tuning Result NN` stream
+        /// with a usable calibration table was found - in that case
+        /// spectra fall back to the raw, uncalibrated index axis rather
+        /// than fabricate a calibration (see `docs/format/06-known-limitations.md`).
+        calibration: Option<ttfl::Calibration>,
     },
 }
 
@@ -111,11 +125,20 @@ impl Reader {
                 let subsets = ttfl::parse_data_index(&di)?;
                 let bounds = ttfl::scan_bounds(&subsets, ms_raw.len());
                 let retention_time_ms = parse_u32_array(&rt);
+                // Any of the 3 on-disk copies carries the same
+                // calibration data (see `TTFL_TUNING_RESULT`'s doc
+                // comment); try each in turn and fall back to `None`
+                // (raw, uncalibrated index axis) if none parse.
+                let calibration = TTFL_TUNING_RESULT
+                    .iter()
+                    .find_map(|path| raw::read_stream_opt(&mut comp, path))
+                    .and_then(|data| ttfl::parse_calibration(&data));
                 Decoded::Ttfl {
                     ms_raw,
                     subsets,
                     bounds,
                     retention_time_ms,
+                    calibration,
                 }
             }
         };
@@ -294,15 +317,23 @@ fn qtfl_spectra(
 }
 
 /// Build spectra for the `.lcd` IT-TOF variant. Each `(entry, channel)`
-/// subset yields one spectrum over the raw, uncalibrated time-bin index
-/// axis - see `docs/format/06-known-limitations.md`. Emission order is
-/// entry-major (RT order), then channel 0..3 within each entry.
+/// subset yields one spectrum. Emission order is entry-major (RT order),
+/// then channel 0..3 within each entry.
+///
+/// `mz` is calibrated physical m/z when `calibration` is `Some` (the
+/// common case - see `raw::ttfl::Calibration`'s doc comment for the
+/// derivation and evidence), computed from the RLE payload's raw
+/// time-bin index via `Calibration::mz`. When no calibration could be
+/// parsed from the file (`None`), this falls back to the raw,
+/// uncalibrated index axis rather than fabricate one - see
+/// `docs/format/06-known-limitations.md`.
 fn ttfl_spectra(
     stem: &str,
     ms_raw: &[u8],
     subsets: &[ttfl::DataIndexSubset],
     bounds: &[(u32, u32)],
     retention_time_ms: &[u32],
+    calibration: Option<&ttfl::Calibration>,
 ) -> Vec<SpectrumRecord> {
     let mut out = Vec::with_capacity(subsets.len());
     for (subset, &(start, end)) in subsets.iter().zip(bounds.iter()) {
@@ -316,6 +347,10 @@ fn ttfl_spectra(
         };
         let rt_ms = retention_time_ms.get(subset.entry_i).copied().unwrap_or(0);
         let idx = out.len();
+        let mz = match calibration {
+            Some(cal) => spec.index_axis.iter().map(|&i| cal.mz(i)).collect(),
+            None => spec.index_axis,
+        };
         out.push(SpectrumRecord {
             index: idx,
             scan_number: (idx + 1) as u32,
@@ -339,7 +374,7 @@ fn ttfl_spectra(
             inv_mobility: None,
             faims_cv: None, // Shimadzu IT-TOF instruments have no FAIMS interface.
             precursor: None,
-            mz: spec.index_axis, // raw time-bin index, NOT calibrated m/z.
+            mz,
             intensity: spec.intensity,
             inv_mobility_per_peak: None,
         });
@@ -423,7 +458,15 @@ impl SpectrumSource for Reader {
                 subsets,
                 bounds,
                 retention_time_ms,
-            } => ttfl_spectra(&self.stem, ms_raw, subsets, bounds, retention_time_ms),
+                calibration,
+            } => ttfl_spectra(
+                &self.stem,
+                ms_raw,
+                subsets,
+                bounds,
+                retention_time_ms,
+                calibration.as_ref(),
+            ),
         };
         Box::new(spectra.into_iter())
     }

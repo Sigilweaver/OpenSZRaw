@@ -43,11 +43,6 @@ for MRM/targeted acquisitions - see
 
 ## What the reader does not yet do
 
-- **IT-TOF m/z calibration**: `.lcd` IT-TOF spectra populate `mz` with
-  the raw, uncalibrated time-bin index reconstructed from the payload's
-  run-length encoding, not a calibrated Da value. No calibration formula
-  has been located yet - see
-  [Known limitations](../format/known-limitations).
 - **IT-TOF polarity / MS level**: every IT-TOF spectrum reports
   `ms_level = 1` and `polarity = None`; the channel-to-polarity mapping
   implied by dataset naming (`..._pos-neg_NN.lcd`) has not been decoded.

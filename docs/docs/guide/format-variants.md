@@ -34,8 +34,9 @@ run-length-encoded sparse profile data over 4 interleaved acquisition
 channels per retention-time point (commonly alternating polarity or
 MS level in the source method, e.g. datasets named `..._pos-neg_NN.lcd`
 - though OpenSZRaw does not yet decode which channel is which). The
-reconstructed index axis is a raw, uncalibrated digitizer time-bin
-index, not physical m/z - see
+reconstructed index axis is a raw digitizer time-bin index, converted to
+physical m/z via a per-file calibration parsed from the file's own TOF
+tuning data - see
 [Known limitations](../format/known-limitations).
 
 ## `.lcd` QTOF

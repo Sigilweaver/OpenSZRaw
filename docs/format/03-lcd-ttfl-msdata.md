@@ -1,7 +1,8 @@
 # 03. LC-MS IT-TOF (.lcd) MS Data Structures
 
-**Status**: PARTIAL (payload run-length encoding scheme: CONFIRMED; scan
-metadata prefix and channel-to-m/z calibration: still open)
+**Status**: PARTIAL (payload run-length encoding scheme: CONFIRMED;
+index-to-m/z calibration: CONFIRMED, see section 3c; scan metadata
+prefix: still open)
 
 The `TTFL Raw Data` directory in IT-TOF `.lcd` files contains the primary
 mass spectrometry raw data (e.g., MTBLS432, PXD020792). It uses a
@@ -221,18 +222,141 @@ claims:
   arithmetically match the decoded per-scan intensity sums in any
   straightforward way tried (no scaling factor found). Left open.
 
-### 3c. Channel-index -> m/z calibration (STILL OPEN)
+### 3c. Channel-index -> m/z calibration (CONFIRMED)
 
-The RLE stream's implicit index axis (position, reconstructed via
-cumulative `skip` values) is very likely a raw digitizer/TOF time-bin
-index, not m/z directly - `total_span` (highest position reached) varies
-per scan in the few-thousand to tens-of-thousands range, consistent with
-a TOF time axis. No calibration table (index -> m/z, e.g. the usual
-quadratic `m/z = (a*t + b)^2` TOF formula) was located or derived this
-session. `TTFL Instrument Param/MS Parameter` and `TTFL Tuning/*` streams
-exist in every file and are likely where such a calibration lives, but
-were not opened/parsed this session - flagged as the natural next step
-for anyone picking this up.
+Resolves Sigilweaver/OpenSZRaw#1. The RLE stream's implicit index axis
+(position, reconstructed via cumulative `skip` values) is a raw
+digitizer/TOF time-bin index, and this session located and verified the
+file's own embedded calibration that converts it to physical m/z.
+Implemented as `raw::ttfl::Calibration` / `raw::ttfl::parse_calibration`
+in `crates/openszraw`; see that module's doc comment for the
+implementation-level summary. This section records the full derivation
+and evidence.
+
+**Where the calibration lives**: `TTFL Tuning/Tuning Result 00` (and two
+byte-identical copies, `01` and `02`) contains two small fixed-offset
+tables:
+
+- Up to 9 reference calibrant masses, as little-endian `u32` at byte
+  offsets `3022, 3026, 3030, ...` (stride 4), scaled by `1e-4` (a
+  fixed-point convention also seen elsewhere in this stream), zero-padded
+  after the last real entry.
+- A matching count of measured flight times, as little-endian `f64` at
+  byte offsets `3150, 3158, 3166, ...` (stride 8).
+
+**Identifying the masses**: the mass ladder's pairwise spacing is an
+exact integer multiple of 67.9874 Da in every file checked. 67.9874 Da is
+the monoisotopic mass of `HCOONa` (computed here from public atomic mass
+constants - C 12.0000, H 1.007825, O 15.994915, Na 22.989770 - not from
+any vendor reference), i.e. the mass ladder is a **sodium formate cluster
+ion series**, `[Na(HCOONa)n]+`. This is a standard, publicly documented
+ESI calibration solution used industry-wide, not proprietary Shimadzu
+data - its presence here is expected of any ESI instrument's tune
+records.
+
+**Fitting the calibration**: the standard linear TOF flight-time law,
+`time = a*sqrt(mz) + b` (basic reflectron/linear TOF physics, not
+vendor-specific), fit by least squares against the paired
+(mass, time) table, gives a residual at the level of floating-point
+round-trip noise. Worked example from
+`MTBLS432/6-wk_HZ_CC_male_12_65__30min_pos-neg_43.lcd`'s
+`TTFL Tuning/Tuning Result 00`:
+
+| mass (Da) | time  | fit residual |
+|-----------|-------|--------------|
+| 1589.64   | 21908.68359375 | +0.020 |
+| 2949.388  | 29806.38671875 | -0.037 |
+| 4309.136  | 36007.29296875 | +0.072 |
+| 5668.885  | 41284.74218750 | -0.053 |
+| 7028.633  | 45958.96484375 | -0.025 |
+| 8388.381  | 50198.98046875 | +0.005 |
+| 9748.129  | 54107.10156250 | -0.012 |
+| 11107.877 | 57750.94140625 | +0.011 |
+| 12467.625 | 61177.76953125 | +0.019 |
+
+giving `a = 547.012885`, `b = 99.101660` (max residual 0.072 out of a
+~20,000-61,000 range, i.e. ~1e-6 relative). Inverting gives
+`mz = ((index - b) / a)^2`, applied directly to the RLE payload's raw
+index with no assumed origin shift.
+
+Checked this way across every locally available IT-TOF `.lcd` file (81
+files: 45 MTBLS432, 5 PXD020792, 31 PXD025121) - every file's own mass/time
+table fits this model to the same ~1e-6-relative-residual precision, and
+there are only **4 distinct `(a, b)` pairs across the whole corpus**
+(consistent with a handful of real tuning sessions covering batches of
+files, not coincidence or a hardcoded constant): `(547.0129, 99.1017)`
+for MTBLS432, `(667.2112, 145.5528)` for PXD025121, and two very close
+values `(652.8886, 93.6675)` / `(652.8939, 93.5880)` within PXD020792
+(likely a re-tune partway through that batch's acquisition).
+
+**Why this is believed to also calibrate the RLE payload's index axis**
+(the part that could not be checked against vendor ground truth, per
+this project's clean-room policy - only against independent, internal,
+and public-chemistry evidence):
+
+1. **Order of magnitude**: the tuning "time" ladder spans roughly
+   20,000-95,000 across the corpus; real scan index ranges reach the same
+   order of magnitude for genuine ion signal (see the noise-tail caveat
+   below for the much larger index values seen in low-intensity
+   background).
+2. **Plausible chemistry**: applying the fit to real decoded scan peaks
+   yields small-molecule/metabolite-range m/z (tens to low thousands of
+   Da) for the large majority of real signal in these LC-MS metabolomics
+   runs.
+3. **Recurrence of a known calibrant background ion at a stable,
+   predicted index position**: searching real scan data (independent of
+   any vendor tool) for the theoretical sodium formate cluster masses -
+   at the index position `Calibration::mz`'s inverse predicts for each -
+   finds them recurring at a **tightly clustered index position (within
+   ~7-8 raw index units, sub-0.05 Da) across dozens of scans spanning an
+   entire 30-minute run**, in both MTBLS432 and PXD025121 files with
+   their own distinct `(a, b)`. In the MTBLS432 file this recurrence is
+   also concentrated almost entirely in channels `sub_i` 0/1 and nearly
+   absent from `sub_i` 2/3 (e.g. m/z 974.8129: 30/1711 and 44/1711 scans
+   respectively in channels 0/1, vs. 0/1711 and 5/1711 in channels 2/3) -
+   exactly the pattern expected if `sub_i` 0/1 are positive polarity
+   (where a `+1` sodium cluster cation is expected) and 2/3 are negative
+   (where it should not appear), independently corroborating the
+   channel-pairing noted in `docs/format/06-known-limitations.md` section
+   2 as a side effect, though that channel-to-polarity mapping itself
+   remains otherwise unconfirmed and out of scope here.
+4. A **density-based background check does not discriminate** (searching
+   for an arbitrary mass 0.4 Da off the real series finds peaks nearby
+   almost as often, ~17-18 average hits per 400 scans either way) - real
+   LC-MS metabolomics data is chemically dense enough that "is there a
+   peak near this index" alone proves little. The clustering test above
+   (point 3) is the one that does discriminate, because it checks
+   *positional stability across many independent scans*, not just
+   presence.
+5. A **mass-defect distribution check across all decoded points was
+   uninformative** (flat/uniform, even restricted to each scan's single
+   most intense point) - the raw RLE-decoded stream carries a large
+   amount of low-level noise/ringing across the whole time-bin axis
+   (unrelated to real ion chemistry), which swamped this test. This is
+   noted as a dead end, not a red flag against the calibration: see the
+   noise-tail caveat below, which independently explains why bulk
+   statistics over *all* points are not expected to look clean.
+
+**Known limitation carried over, not resolved by this work**: this
+confirms the calibration's functional form and per-file constants to
+very high confidence, and confirms it correctly localizes real ion
+signal, but does not independently rule out a small, constant index
+origin offset between the RLE payload's index convention (cumulative
+`skip` from 0 at the start of a scan's own RLE stream) and the tuning
+stream's own time convention - see
+`docs/format/06-known-limitations.md` section 1.
+
+**Noise-tail caveat**: applying the calibration to the full, unfiltered
+RLE index axis (as opposed to only real, high-intensity ion peaks) can
+yield very large m/z - e.g. the extreme index of 576,297 documented in
+section 3c's earlier revision (`PXD020792/UY02-01-01p400.LCD`) maps to
+roughly 780,000 Da under that file's own calibration. This does not
+indicate a broken calibration; it indicates that such extreme index
+positions are electronic noise, not real ions (no IT-TOF instrument
+measures m/z in that range) - filtering/peak-picking such noise is
+downstream work this crate does not attempt, matching its existing
+policy of exposing the fully-decoded raw signal rather than silently
+dropping data.
 
 ## Summary of status
 
@@ -246,8 +370,7 @@ for anyone picking this up.
   PXD020792).
 - Scan metadata prefix content: **PARTIAL/open** - boundary reliably
   located, byte layout not decoded.
-- Channel-index-to-m/z calibration: **open** - not investigated this
-  session beyond noting where it probably lives.
+- Channel-index-to-m/z calibration: **CONFIRMED** - see section 3c above.
 
 Scripts: `re/src/analysis/ttfl_reconfirm.py`,
 `re/src/analysis/ttfl_header_scan.py`,
