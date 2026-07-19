@@ -8,8 +8,10 @@
 [![Rust MSRV](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 
 Rust and Python reader for Shimadzu LabSolutions mass spectrometry raw
-data (`.lcd` LC-MS, `.qgd` GCMS, `.gcd` GC), clean-room
-reverse-engineered with no Shimadzu SDK or software dependency.
+data (`.lcd` LC-MS, `.qgd` GCMS, `.gcd` GC), with no Shimadzu SDK or
+software dependency. Covers `.qgd` GC-MS (full-scan profile and
+MRM/targeted) and `.lcd` LC-MS across IT-TOF (profile) and QTOF
+(centroid) acquisitions.
 
 Documentation: [sigilweaver.app/openszraw/docs](https://sigilweaver.app/openszraw/docs)
 
@@ -20,24 +22,23 @@ Documentation: [sigilweaver.app/openszraw/docs](https://sigilweaver.app/openszra
 > [OpenARaw](https://github.com/Sigilweaver/OpenARaw) (Agilent),
 > [OpenSXRaw](https://github.com/Sigilweaver/OpenSXRaw) (SCIEX).
 
-## Status
-
-Published on crates.io (`openszraw`) and PyPI (`openszraw`), v0.1.0. A
-Rust reader (`crates/openszraw`) implements all three confirmed raw
-data variants: `.qgd` GC-MS (full-scan profile and MRM/targeted), `.lcd`
-IT-TOF (run-length-encoded profile spectra, calibrated to physical m/z
-via the file's own embedded TOF tuning data), and `.lcd` QTOF (centroid).
-See `docs/format/` for the byte-level format specs and
-`docs/format/06-known-limitations.md` for what is deliberately not yet
-resolved (per-channel polarity, some MS2 precursor m/z values). Python
-bindings (`crates/openszraw-py`) mirror the Rust API. Wired into
-[openmassspec-io](https://github.com/Sigilweaver/OpenMassSpec) 1.5.0+
-as a `shimadzu` feature. See the sourcing strategy in the ops repo's
-[SCOPING_PLAN.md](https://github.com/Sigilweaver/ops/blob/main/SCOPING_PLAN.md)
-and this repo's `re/ROADMAP.md` (local-only, gitignored) for the current
-phase.
-
 ## Install
+
+**Prefer [`openmassspec-io`](https://github.com/Sigilweaver/OpenMassSpec)
+with the `shimadzu` feature/extra** unless you need this parser standalone
+(minimal dependencies, or building your own abstraction) - the umbrella
+gives you format auto-detection, mzML conversion, and Arrow streaming
+across all wired-in vendors for free:
+
+```sh
+cargo add openmassspec-io --features shimadzu
+```
+
+```sh
+pip install openmassspec[shimadzu]
+```
+
+Standalone:
 
 Rust:
 
@@ -78,6 +79,9 @@ print(spectrum.ms_level, spectrum.retention_time_sec, len(spectrum.mz))
 `Reader::open` (and `RawReader`) auto-detects `.qgd` vs `.lcd` IT-TOF vs
 `.lcd` QTOF from the file's internal CFBF stream layout, never from the
 filename or extension alone.
+
+See the [docs site](https://sigilweaver.app/openszraw/docs) for the full
+guide, format specification, and API reference.
 
 ## License
 
