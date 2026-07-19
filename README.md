@@ -1,8 +1,17 @@
 # OpenSZRaw
 
+[![CI](https://github.com/Sigilweaver/OpenSZRaw/actions/workflows/ci.yml/badge.svg)](https://github.com/Sigilweaver/OpenSZRaw/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/openszraw.svg)](https://crates.io/crates/openszraw)
+[![PyPI](https://img.shields.io/pypi/v/openszraw.svg)](https://pypi.org/project/openszraw/)
+[![docs.rs](https://img.shields.io/docsrs/openszraw)](https://docs.rs/openszraw)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Rust MSRV](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
+
 Rust and Python reader for Shimadzu LabSolutions mass spectrometry raw
 data (`.lcd` LC-MS, `.qgd` GCMS, `.gcd` GC), clean-room
 reverse-engineered with no Shimadzu SDK or software dependency.
+
+Documentation: [sigilweaver.app/openszraw/docs](https://sigilweaver.app/openszraw/docs)
 
 > Sibling readers in the same stack:
 > [OpenTFRaw](https://github.com/Sigilweaver/OpenTFRaw) (Thermo),
