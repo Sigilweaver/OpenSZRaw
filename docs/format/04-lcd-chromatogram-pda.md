@@ -170,7 +170,15 @@ files - the channels that looked smooth by eye in each case turned out
 to have near-zero value diversity (as low as 2 distinct values across a
 6-segment run), with a `0.49`-`0.84` smoothness-vs-diversity correlation
 confirming the pattern is a metric artifact, not a decode (see
-2026-07-20 session 6).
+2026-07-20 session 6); two MS-Numpress-inspired nibble-granular varint
+schemes (a generic per-nibble continuation flag, and the length-prefixed
+scheme closer to Numpress's own published `encodeInt`) swept across three
+independent files and four region targets - 0% clean everywhere except
+one outlier that a shuffled-byte control and cross-file check both
+disqualified as search-space noise; and zlib/DEFLATE framing for the
+whole payload or body, ruled out via a randomized control after an
+initial small hit rate turned out statistically indistinguishable from
+both a random-byte and a shuffled-byte control (see 2026-07-20 session 7).
 
 **Genuinely open:**
 - The exact per-value token grammar (width-selection rule and numeric
@@ -2315,6 +2323,142 @@ own scratch directory (outside the repo, not saved to
 no new reusable helper modules were warranted for a manual-reading
 session.
 
+## 2026-07-20 session 7: cross-referencing the PSI-MS/mzML open spec - MS-Numpress-style nibble varints and zlib/DEFLATE framing, both ruled out with randomized controls
+
+Prompted specifically by the suggestion to cross-reference the mzML/
+PSI-MS open spec for an analogous UV/PDA encoding (rather than continuing
+to sweep parameters of schemes already tried), this session tested two
+concrete, public, non-Shimadzu ideas that come directly from that world:
+**MS-Numpress**, the published PSI-MS-affiliated lossy compression scheme
+for mzML `<binaryDataArray>` content (Teleman et al., "Numerical
+compression schemes for proteomics mass spectrometry data", Mol Cell
+Proteomics 2014 - an open, community-standard algorithm with a public
+BSD-licensed reference implementation, not vendor material), and whether
+the payload is simply a standard **zlib/DEFLATE** stream, which is the
+actual real-world mechanism mzML uses to compress its own binary data
+arrays. **Neither fits; both are ruled out, with randomized controls for
+the one place a nonzero signal briefly appeared.** The per-value payload
+grammar remains undecoded.
+
+- **Why this is a materially different search space from every prior
+  continuation-bit/threshold sweep, not a repeat of one**: every
+  varint-style framing this document has tried before (the original
+  LEB128 attempt, the "8 bit positions x both polarities x 0-11 byte
+  header/footer skip" continuation-bit sweep, the magnitude-threshold
+  sweep, the region-local re-runs) operated at **byte** granularity -
+  a token always starts and ends on a byte boundary. MS-Numpress's
+  actual integer encoding operates at **nibble** (half-byte) granularity:
+  each residual is packed into a run of 4-bit nibbles with no requirement
+  that a token start on a byte boundary, which can natively produce
+  non-integer average bytes/value (e.g. this document's own observed
+  ~1.88x and ~3x `npts` centering figures) without needing a threshold or
+  escape-byte overlay on top. This session implemented two variants of
+  that idea and swept both against real segments from three independent
+  files (`MTBLS432/..._12_65...lcd`, `npts=68`, symmetric form, whole-body
+  target 68; `MSV000084197/20190607_NM16.lcd`, `npts=321`, split form,
+  region-A target 256 and region-tail target 65; `PXD025121/1.lcd` and
+  two sibling files, `npts=327`, split form, region-tail target 71),
+  reusing the already-established envelope/region extraction
+  (`docs/format/04` sessions 1 and 3) rather than re-deriving it.
+- **Variant 1 - generic per-nibble continuation flag** (each 4-bit nibble
+  carries 3 payload bits plus 1 "more nibbles follow" flag, the nibble-
+  granular analogue of the already-tried byte-level continuation-bit
+  sweep): swept nibble order (high-nibble-first vs low-nibble-first)
+  x continuation-bit position within the nibble (top bit vs bottom bit)
+  x polarity (flag-set-means-more vs flag-clear-means-more) x value bit
+  accumulation order (MSB-first vs LSB-first) x header skip (0-4 bytes),
+  80 combinations per target. Result: **flat 0% clean** on
+  `MTBLS432`'s whole-body target (0/2662) and `MSV000084197`'s region-A
+  target (0/3498); **effectively 0%** on `MSV000084197`'s region-tail
+  (1/3498, 0.03%). One file showed a real-looking outlier -
+  `PXD025121/1.lcd`'s region tail reached **166/6187 (2.68%)** at the
+  best configuration - but this does not survive scrutiny: a
+  same-multiset **shuffled-byte control** (same bytes, scrambled order)
+  retains **132/6187 (2.13%)**, i.e. **80% of the apparent signal
+  survives destroying byte order entirely**, meaning this is almost
+  entirely a byte-*value*-distribution artifact, not the order-dependent
+  structure a real token grammar would produce (contrast this document's
+  genuine positive controls elsewhere, e.g. session 3's region-`tail`
+  marker-bit finding, where the shuffled control collapsed to 0.2% against
+  a 70.9% real rate - a qualitatively different, decisive gap this
+  session's result does not show). The same configuration also fails
+  cross-file generalization outright, dropping to **62/6179 (1.00%)** on
+  `PXD025121/10.lcd` and **20/6179 (0.32%)** on `/11.lcd` - both files
+  sharing the same instrument, method, and `npts` as `/1.lcd`. This is
+  the same class of small-sample search-space noise this document's own
+  2026-07-20 session 2 already quantified (a ~48% false-positive base
+  rate for a much smaller, single-threshold search); an 80-way sweep over
+  6187 segments producing one 2.68%-hitting outlier that halves under a
+  shuffle control and collapses under cross-file testing is fully
+  consistent with chance, not a real per-nibble continuation scheme.
+- **Variant 2 - length-prefixed nibbles, a closer structural match to
+  MS-Numpress's actual published `encodeInt`** (one 4-bit "length"
+  nibble stating how many raw data nibbles immediately follow, rather
+  than a per-nibble continuation flag - this is the real shape of
+  Numpress's own integer encoding, which exploits sign-extension to keep
+  small residuals to very few nibbles): swept header skip (0-4 bytes) x
+  nibble order x length semantics (`L` vs `L+1` data nibbles) x value bit
+  order x maximum token length (8 nibbles, matching Numpress's own 32-bit
+  cap, or 15, the full nibble range), 80 combinations per target, against
+  the same three files/four targets. Result: **0% clean, on every single
+  target checked, with zero exceptions** - not even the small, noisy,
+  non-generalizing signal Variant 1 produced. This is the most decisive
+  negative result of any per-value framing hypothesis this document has
+  tried: the existing byte-level continuation-bit sweep's best-ever
+  result was 88/3502 (2.5%, see the "further ruled-out hypotheses"
+  section); this nibble-length-prefix scheme does not reach that even
+  once, across 4 targets x 80 configurations x up to 6187 segments each.
+- **zlib/DEFLATE framing** (does the payload, or its body, simply contain
+  a standard compressed stream - the actual mechanism mzML itself uses
+  for binary data arrays, as opposed to a Numpress-style custom integer
+  code): tried `zlib.decompress` at `wbits` 15 (zlib-wrapped), -15 (raw
+  DEFLATE, no header/checksum), 31 (gzip), and 47 (auto-detect
+  zlib/gzip) against every real-mode payload and body in
+  `MTBLS432/..._12_65...lcd` (2662 segments). **21/2662 (0.79%)**
+  "succeed" (all at `wbits=-15`, raw DEFLATE, on the whole payload - never
+  on the body alone, and never at any of the header'd variants). This
+  looked like it might be worth chasing until checked against controls,
+  exactly per this document's established discipline: a **length-matched
+  random-byte control** succeeds at **15/2662 (0.56%)**, and a
+  **same-multiset shuffled-byte control** at **14/2662 (0.53%)** - both
+  statistically indistinguishable from the real rate. This is expected
+  once the actual "decompressed" output is inspected: every successful
+  case yields a **1-byte output**, confirming these are not real
+  compressed streams but instances of raw DEFLATE's well-known weak
+  self-framing (no header magic, no checksum - a short byte run can
+  coincidentally contain a valid Huffman end-of-block marker and "parse,"
+  producing a near-empty result, regardless of whether the input was ever
+  compressed data at all). **zlib/DEFLATE is ruled out** as the payload's
+  encoding, whole-payload or body-only, for either envelope form.
+
+**Verdict**: cross-referencing the PSI-MS/mzML ecosystem's own published
+compression schemes was a genuinely new angle (nothing prior in this
+document tried nibble-granular tokenization or literal DEFLATE framing),
+and it produced two clean, thoroughly-controlled negative results rather
+than another ambiguous partial signal - in the nibble-continuation case,
+one candidate outlier was found and then properly disqualified by the
+same shuffle-control-plus-cross-file-check discipline this document has
+used throughout, rather than reported as a lead. This does not mean
+mzML/PSI-MS ideas are exhausted as a source of inspiration (Numpress's
+*specific* bit-packing scheme is ruled out, not the general idea that a
+delta/prediction-based numeric transform might still explain the
+*values* once a correct token-boundary rule is found by some other
+means - see the existing fp16/spectral-delta "validator, not framing
+strategy" scoping note earlier in this document, which applies here too),
+but it closes off the two most concrete, literal readings of "does this
+look like an mzML-world encoding" that this session could test.
+
+Scripts (new this session, under `re/src/analysis/`, gitignored per this
+repo's `re/` sandbox convention): `common.py` (re-derived `iter_segments`/
+`body_of`/region-split/flat-detection helpers, since no prior session's
+scripts were preserved), `nibble_varint.py` (Variant 1: generic per-nibble
+continuation-flag decoder and sweep), `nibble_lenprefix.py` (Variant 2:
+length-prefixed nibble decoder and sweep), `run_nibble_sweep.py` and
+`run_lenprefix_sweep.py` (drivers tying the above to real corpus files).
+The zlib/DEFLATE check was ad hoc (`python3 -c`/heredoc, not saved as a
+standalone script, since it needed no reusable abstraction beyond the
+standard library's own `zlib` module).
+
 ## LC Raw Data - a different, unrelated chromatogram stream
 
 While looking for real `LSS Raw Data` chromatogram content (all empty in
@@ -2519,3 +2663,29 @@ leads, not findings:
   much larger search than session 2's budget allowed, but is a more
   faithful test of the "explicit per-segment scale field" idea than
   what was actually tried.
+- **(Attempted 2026-07-20 session 7, ruled out) Cross-reference the
+  PSI-MS/mzML open spec's own compression schemes for the token-boundary
+  rule.** Two concrete readings were tried and ruled out this session:
+  MS-Numpress-style nibble-granular varint encoding (both a generic
+  per-nibble continuation flag and the length-prefixed scheme closer to
+  Numpress's own published algorithm), and literal zlib/DEFLATE framing
+  of the payload or body. See the 2026-07-20 session 7 section above for
+  full detail, including the shuffled-byte and cross-file controls that
+  disqualified the one place either search produced a nonzero hit rate.
+  This closes the two most literal readings of the idea; what remains
+  untried from this angle is applying MS-Numpress's *value* transforms
+  (double-delta linear prediction, or the "Slof" log-fixed-point
+  transform) as validators against a candidate token-boundary assignment
+  a future width-selection breakthrough would produce - the same
+  "validator, not framing strategy" caveat already noted above for
+  fp16 and spectral-domain delta, since neither transform changes which
+  bytes form a token, only how a found token's bytes become a number.
+- **(New, from 2026-07-20 session 7) Manual, by-hand nibble-level
+  inspection of region `tail`'s channel-2-onward bytes was not attempted
+  this session.** Session 7's nibble-granular sweeps were parameterized
+  searches, in the same automated-sweep style this document's own session
+  6 found unproductive for the byte-granular case. The manual read that
+  session recommends as the next step for region `tail` channels 2+ (see
+  that bullet above) has not yet been tried at nibble granularity either,
+  and remains a genuinely untried combination of "manual" and
+  "nibble-aware" that no session, including this one, has done.

@@ -287,7 +287,7 @@ integer and escape-byte hypotheses (Sigilweaver/OpenSZRaw#2). This is UV
 detector / chromatogram data, not core MS spectra, so it does not block
 MS-level format parity.
 
-Six same-day (2026-07-20) sessions of further clean-room analysis
+Seven same-day (2026-07-20) sessions of further clean-room analysis
 narrowed the problem considerably without decoding it. Confirmed: 2 of
 the 4 varying fields in the 112-byte `PDA 3D Raw Data/CheckSum` stream
 are exact `u32` byte sizes of the `3D Raw Data` and `Max Plot` streams
@@ -314,7 +314,16 @@ files. Two genuine process improvements came out of this: a directly
 quantified ~48% false-positive base rate for this document's
 zero-leftover acceptance test, and a fix to the physical-plausibility
 check itself (mode-dominated or low-diversity decodes can look
-deceptively "smooth" under mean relative step alone). See
-`docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20 sessions 1-6 for
+deceptively "smooth" under mean relative step alone). A seventh session
+cross-referenced the PSI-MS/mzML open spec directly (per a specific ask
+to look there rather than sweep more parameters of already-tried
+byte-granular schemes): two MS-Numpress-inspired nibble-granular varint
+encodings and literal zlib/DEFLATE framing of the payload, all ruled out
+- one nibble scheme's only nonzero hit rate was disqualified by a
+shuffled-byte control (80% of it survived byte-order scrambling) and
+cross-file testing (collapsed on two sibling files), and the DEFLATE
+framing's small hit rate proved statistically indistinguishable from
+both a random-byte and a shuffled-byte control. See
+`docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20 sessions 1-7 for
 full detail. None of this decodes the per-value payload; that grammar
 is still open.
