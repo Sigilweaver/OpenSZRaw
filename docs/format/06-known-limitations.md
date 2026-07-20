@@ -286,3 +286,12 @@ that body remains undecoded despite a wide sweep of variable-length
 integer and escape-byte hypotheses (Sigilweaver/OpenSZRaw#2). This is UV
 detector / chromatogram data, not core MS spectra, so it does not block
 MS-level format parity.
+
+A 2026-07-20 session identified 2 of the 4 varying fields in the
+112-byte `PDA 3D Raw Data/CheckSum` stream as exact `u32` byte sizes of
+the `3D Raw Data` and `Max Plot` streams (not a flat/real flag as
+previously read - see the correction note and dated session in
+`docs/format/04`), and ruled out 19 standard CRC-16 polynomials plus
+several other common checksum constructions for the remaining 2 fields.
+Neither finding decodes the payload; the per-value grammar is still
+open.

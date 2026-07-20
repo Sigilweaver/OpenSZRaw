@@ -47,7 +47,19 @@ is a scannable summary, not a substitute for the detailed sections below
 - Real-mode body length is **tightly centered near `3 * npts` bytes**
   for the symmetric (`MTBLS432`) form - close to, but not exactly, a
   uniform 3-bytes-per-value scheme. See "width-table retry on bimodal
-  data".
+  data". The split (`PXD025121`/`MSV000084197`) form centers lower, near
+  `1.88 * npts` (range `[1.65, 2.08] * npts`, 100% of one file's
+  real-mode segments checked) - a distinct, form-specific constant, not
+  the same `3 * npts` figure. See the 2026-07-20 session.
+- **`CheckSum` stream, 2 of 4 varying fields fully identified**: offset
+  56 (`u32` LE) is the exact byte size of `PDA 3D Raw Data/3D Raw Data`;
+  offset 88 (`u32` LE) is the exact byte size of `PDA 3D Raw Data/Max
+  Plot` - both zero-mismatch across 77 files. This corrects an earlier
+  reading of offset 58 as a "flat vs. real" flag byte (it's actually
+  part of the offset-56 size field). Offsets 48 and 80 are confirmed
+  genuinely content-dependent but remain unidentified after a sweep of
+  19 CRC-16 polynomials, Fletcher/Adler/plain-sum checksums, and 5
+  candidate byte ranges. See the 2026-07-20 session.
 - Width selection is very likely **driven by actual per-wavelength
   signal magnitude**, not any of: an external per-run lookup table (no
   config/instrument stream correlates with modal length - "external-
@@ -74,7 +86,10 @@ prefixes; magnitude-threshold split (whole-body and region-A-isolated);
 leading bitmap/nibble width-selector tables (1/2/4-bit codes, both
 pooled-file and per-file least-squares); the TTFL MS RLE scheme applied
 directly; an external per-run gain/width table stored elsewhere in the
-file; `Max Plot` as an independently-decodable crib.
+file; `Max Plot` as an independently-decodable crib; a fixed-width fp16
+(binary16) array (body length essentially never equals `2 * npts`); the
+19-polynomial CRC-16 sweep (plus Fletcher/Adler/plain-sum) against
+`CheckSum` offsets 48 and 80 (see 2026-07-20 session).
 
 **Genuinely open:**
 - The exact per-value token grammar (width-selection rule and numeric
@@ -91,6 +106,15 @@ file; `Max Plot` as an independently-decodable crib.
   a different/simpler-looking encoding, out of this issue's named scope)
   - not decoded, not attempted beyond the initial characterization. See
   "LC Raw Data..." near the end of this document.
+- `CheckSum` offsets 48 and 80 (confirmed content-dependent, not
+  identified as any standard CRC/checksum algorithm - see 2026-07-20
+  session).
+- Whether fp16 (binary16) numeric interpretation or spectral-domain
+  (wavelength-to-wavelength) delta coding is the right *value*
+  interpretation for a token, once a token-boundary rule is found -
+  both remain plausible as validators, neither has been testable yet
+  since no token-boundary rule has been found to validate. See
+  2026-07-20 session.
 
 ## Segment Header
 
@@ -642,6 +666,22 @@ byte at `CheckSum` offset 58 is `0x09` in all 9 real-signal files and
 says whether real data exists at all, not anything about its encoding
 width, so it doesn't help decode the payload itself.
 
+**Correction (2026-07-20 session)**: offset 58 is not a dedicated flag
+byte. It is the high 16 bits of a little-endian `u32` field starting at
+offset 56, and that `u32` is the exact byte length of the
+`PDA 3D Raw Data/3D Raw Data` stream itself (e.g. `0x0009_1A64` =
+`596580`, the `12_65` file's exact stream size, decomposing into the
+`0x1A64`/`6756` seen at offset 56-57 and the `0x09` seen at offset 58).
+The apparent "flat vs. real flag" reading of the lone offset-58 byte was
+a coincidence of magnitude: flat-only files' `3D Raw Data` streams
+happen to stay small enough that byte 58 (bits 16-23 of the size) reads
+`0x03` in this corpus's sample, and real-signal files' larger streams
+happen to read `0x09` - not a purpose-built boolean. See the 2026-07-20
+session below for the full re-characterization, including the
+analogous offset-88 field (`Max Plot` stream size) and a from-scratch
+CRC/checksum sweep against the two still-unidentified offset-48 and
+offset-80 fields.
+
 **Verdict: this thread is closed.** Since the method configuration,
 instrument parameters, and wavelength table are provably identical
 byte-for-byte across files whose "real mode" encoding width differs, the
@@ -1167,6 +1207,176 @@ unbounded-beam "exact" DP with backtracking, and the true-vs-control
 comparison script) built directly on `iter_segments` from
 `pda_varint_bruteforce.py`.
 
+## 2026-07-20 session: full `CheckSum` field identification (2 of 4), a CRC/checksum sweep that rules out the standard algorithms for the other 2, and a feasibility note on the fp16/spectral-delta avenues
+
+Picked up two of the "further avenues" this document's previous session
+left open: fully characterizing the 112-byte `CheckSum` stream (avenue
+3), and trying IEEE-754 half-precision floats and spectral-domain
+(wavelength-to-wavelength) delta encoding (avenues 1 and 2). Net result:
+one genuine structural correction with full corpus verification, a
+thorough negative result on the two still-unidentified `CheckSum`
+fields, and an analytical finding that the fp16/spectral-delta ideas -
+as pure *framing* hypotheses - don't actually open new search space
+beyond what earlier sessions' continuation-bit and magnitude-threshold
+sweeps already covered exhaustively. **The per-value payload grammar
+remains undecoded.**
+
+- **`CheckSum` offsets 56 and 88 fully identified: exact stream byte
+  sizes, not checksums.** Read as little-endian `u32` (not `u16`) at
+  each offset, offset 56 equals the exact byte length of
+  `PDA 3D Raw Data/3D Raw Data` and offset 88 equals the exact byte
+  length of `PDA 3D Raw Data/Max Plot`, both with **zero mismatches
+  across all 77 locally available files with a real `CheckSum` stream
+  and both sub-streams present** (45 `MTBLS432` files - both the 9
+  real-signal and the fully-flat ones, 31 `PXD025121` files, and
+  `MSV000084197/20190607_NM16.lcd`; checked with `olefile`'s own
+  `get_size()` against each file's independently-read stream length, no
+  parsing of the payload itself required). This directly corrects the
+  external-table-hunt session's reading of offset 58 as a "flat vs.
+  real" flag byte - see the correction note inserted in that section
+  above. The two `u32` fields' high words (bytes 50-51 and 82-83) were
+  also confirmed `0x0000` in every file checked, consistent with them
+  being plain sizes rather than some other 32-bit quantity that happens
+  to coincide with a stream length.
+- **Offsets 48 and 80 remain unidentified, but are now more precisely
+  characterized as genuinely data-dependent (not a per-session token or
+  random field), and a real checksum/CRC sweep has been run against
+  them and come up empty.** First, a cheap cross-file check
+  distinguishes "depends on file content" from "random/session-specific":
+  among the 15 `MTBLS432` files sampled, 5 fully-flat files that all
+  share the same segment count (`nseg=2674`) - and therefore, per the
+  cross-file pass's byte-identity finding two sessions ago, byte-identical
+  `3D Raw Data` stream content - all report the **exact same** offset-48
+  value (`30350`) and offset-80 value (`28638`); a sixth flat file with a
+  different segment count (`nseg=2673`) reports different values
+  (`12815`/`57449`) for both. This rules out "opaque per-run token" (it
+  would not repeat exactly across independent acquisitions) and confirms
+  these fields are a deterministic function of the stream's actual byte
+  content, exactly what the stream's name (`CheckSum`) implies - but a
+  wide, explicit sweep against both fields still found no match:
+
+  - **Algorithms tried**: 19 CRC-16 polynomials (including CCITT,
+    IBM/ANSI, XMODEM, standard reciprocal/reversed variants, and several
+    less common published polynomials) crossed with `{reflect-in,
+    reflect-out} x {0x0000, 0xFFFF, 0x1D0F, 0x800D, 0xB2AA, and two
+    data-derived seeds (stream length, segment count)} x {xorout 0x0000,
+    0xFFFF}` - 19 x 2 x 2 x 7 x 2 = 1064 parameter combinations per
+    byte-range tried, implemented with a from-scratch table-based CRC-16
+    (no vendor or third-party crypto library beyond Python's own
+    `zlib`/`crcmod`, both open-source, general-purpose, format-agnostic
+    checksum implementations, consistent with `CONTRIBUTING.md`'s
+    "independent open-source parsers used purely as format checkers"
+    allowance - `crcmod` was used only to spot-check the from-scratch
+    implementation's own predefined-name variants agree, not as a source
+    of Shimadzu-specific knowledge). Also tried: `zlib.crc32` (both
+    16-bit halves), `zlib.adler32` (low 16 bits), Fletcher-16, Fletcher-32
+    (low 16 bits), and plain 16-bit additive/XOR byte sums.
+  - **Byte ranges tried**: the full `PDA 3D Raw Data/3D Raw Data` stream
+    bytes (segment headers and payloads together), payload-only
+    (24-byte segment headers stripped), body-only (the split/symmetric
+    envelope's 4/8-byte header-and-footer further stripped), the 24-byte
+    segment headers alone concatenated, and (for the offset-80 field)
+    the `PDA 3D Raw Data/Max Plot` stream bytes directly - the natural
+    candidate given offset 80 sits in the same header-then-size
+    structural slot, immediately before offset 88's confirmed Max Plot
+    size, that offset 48 occupies relative to offset 56's confirmed `3D
+    Raw Data` size.
+  - **Result: no match, on any combination, against any of the four
+    files checked simultaneously** (`12_65`, `1_63`, `34_73`, and
+    `20_66` for the initial pass; `12_65`, `1_63`, `34_73`, and `21_29`
+    for the widened rerun). A simple direct-sum-of-real-segment-bytes
+    check (mod 65536) was also tried and did not match either offset.
+  - This is a real negative result (a specific, bounded, reproducible
+    search that came up empty), not proof no algorithm exists - Shimadzu
+    could use a nonstandard polynomial, a different data range than the
+    five tried, or a non-CRC construction entirely. But it means the
+    "brute-force small CRC polynomials against known bytes" plan from
+    the previous session's "further avenues" note does not immediately
+    pay off with the standard polynomial set, so a future session
+    revisiting this should either widen the byte-range search further
+    (e.g. per-segment individual checksums rather than one whole-stream
+    value) or treat this thread as lower-priority than the per-value
+    grammar itself.
+
+- **fp16 (binary16) as a fixed-width array: ruled out immediately by
+  body length, as expected.** If real-mode bodies were a plain array of
+  2-byte half-floats, body length would equal exactly `2 * npts` on
+  every real segment. Checked directly: in `MSV000084197`'s split-form
+  stream (`npts=321`, 3502 segments), body length equals `2 * npts`
+  (642 bytes) in exactly **1 of 3498 real-mode segments** (segment index
+  92, in the middle of a smoothly-growing run of neighboring lengths
+  620/637/652/**642**/622/618/614 - a coincidental crossing, not a
+  population), and in `MTBLS432`'s symmetric-form stream (`npts=68`),
+  `2 * npts` (136 bytes) occurs in **0 of 2662** real-mode segments.
+  This is the same kind of hard ruling-out the document's existing
+  "byte-level volatility" and length-histogram findings already
+  established for a generic fixed-width hypothesis, now specifically
+  against fp16's 2-byte width.
+- **A precise, previously-only-anecdotal characterization: the
+  split-form's real-mode body length centers near `1.88 * npts`, not
+  `3 * npts`.** The document's existing "tightly centered near `3 *
+  npts`" finding was established only for the symmetric (`MTBLS432`)
+  form; the split form's centering had only been described anecdotally
+  via one early-buildup example (segments 4-9 of `MSV000084197`, lengths
+  530-571 for `npts=321`, i.e. roughly 1.65-1.78x). Measured precisely
+  across all 3498 real-mode segments of that same stream: mean real
+  body length is **604.8 bytes = 1.884 * npts**, median **609 bytes =
+  1.897 * npts**, and the full observed range is **530 to 668 bytes
+  (1.651x to 2.081x npts)** - i.e. **100% of this file's real-mode
+  segments fall in a `[1.6, 2.2] * npts` band**, a tighter and
+  differently-centered analogue of the symmetric form's `3 * npts`
+  finding, not the same constant. This is consistent with (not
+  contradictory to) the existing magnitude-threshold sweep's
+  best-performing configuration on this same file being a *2-byte* wide
+  token with a 1-byte cheap case (`threshold=0x1f`/`0x20`), since a mix
+  of mostly-2-byte with some 1-byte tokens naturally averages below 2.0
+  and above 1.0 per value - it does not, by itself, favor fp16 over the
+  already-tried magnitude-threshold framing.
+- **Why neither fp16-with-escape nor spectral-domain delta actually
+  reopens new search space, analytically** (no new code needed for this
+  part - a scoping finding, recorded so a future session doesn't spend a
+  session re-deriving it): both ideas change how a *token's bytes* are
+  turned into a *number*, not which bytes belong to which token. The
+  already-exhausted continuation-bit sweep (all 8 bit positions x both
+  polarities x 0-11 byte header/footer skip) and magnitude-threshold
+  sweep (all 256 threshold values x 2-4 byte wide-token width) already
+  covered every possible token-boundary assignment those searches were
+  capable of expressing - swapping the *numeric interpretation* of a
+  found 2-byte or 4-byte token from "raw magnitude-threshold scalar" to
+  "IEEE-754 binary16" or "delta from the previous wavelength's value"
+  changes nothing about which byte offsets get grouped into which
+  token, so it cannot by itself turn a boundary search that already
+  plateaued at ~6% clean segments into a working decode. Both ideas
+  remain genuinely useful, but only as **validators/tie-breakers** for
+  candidate token-boundary assignments a future width-selection
+  breakthrough would produce (does the resulting number look like a
+  plausible fp16 absorbance value; does the resulting per-wavelength
+  sequence look smoother when spectral-differenced) - not as
+  independent framing strategies in their own right. This reframes two
+  of the previous session's four "further avenues" from "untried
+  decode strategies" to "untried validators," which is a more accurate
+  scoping for whoever picks this up next.
+- **Not pursued this session, for budget reasons, still open**: avenue
+  4 (aligning the flat-to-real transition to elapsed retention time
+  rather than segment count) was not attempted - there is no existing
+  per-segment retention-time decode for the PDA stream in this
+  codebase to cross-reference against (unlike TTFL's RT index), so
+  establishing one would be its own sub-investigation before the
+  time-alignment question could even be asked. Avenue 5 (physical
+  plausibility/peak-shape as a soft validator) was not attempted either,
+  for the same reason avenue 1's fp16 analysis above landed on: it
+  requires a candidate token-boundary assignment to validate, and none
+  of the framing searches to date (including this session's) have
+  produced one to test it against.
+
+Scripts: ad hoc, run via disposable Python files under this session's
+own scratch directory (outside the repo, not saved to
+`re/src/analysis/`), built on a from-scratch `olefile`-based
+`iter_segments`/`body_of` pair mirroring the shape of
+`pda_varint_bruteforce.py` from earlier sessions, plus a from-scratch
+table-based CRC-16 implementation (`crc_fast.py`-equivalent) and
+`crcmod`/`zlib` for cross-checking standard-named variants.
+
 ## LC Raw Data - a different, unrelated chromatogram stream
 
 While looking for real `LSS Raw Data` chromatogram content (all empty in
@@ -1222,46 +1432,65 @@ treat them as leads, not findings:
   MassIVE, searching for older instrument models or explicitly
   UV/RID-detector method descriptions) before assuming `PDA 3D Raw
   Data` is a valid stand-in for the named stream.
-- **Test spectral-domain (wavelength-to-wavelength) delta encoding, not
-  just temporal (segment-to-segment) delta encoding.** Everything tried
-  so far assumes each segment's `npts` tokens are independent absolute
-  values, or deltas against the *same channel in the previous segment*.
-  UV absorbance spectra are also smooth *across wavelength* within a
-  single timepoint - worth testing whether a token's value is better
-  modeled as a delta from the *previous wavelength's* decoded value in
-  the *same* segment (first-differencing within one spectrum), which is
-  a distinct hypothesis from anything in the "ruled out" list above.
-- **Try IEEE-754 half-precision (binary16) floats directly**, not just
-  the word-swapped "PDP-endian" full float32 interpretation already
-  explored. Absorbance units typically span a small range (0-3 AU),
-  which fp16 represents naturally in 2 bytes - worth checking whether a
-  mixed fp16/fp32 scheme (small values as 2-byte half floats, an escape
-  to 4-byte full float32 for outliers) fits better than the arbitrary
-  magnitude-agnostic proxy the joint-decoder pass used, and ties
-  naturally into the already-observed 2-vs-3-vs-4-byte width mix.
-- **Characterize the `CheckSum` stream (112 bytes) more fully.** The
-  external-table-hunt pass found byte offset 58 cleanly flags real-vs-
-  flat mode (`0x09` vs `0x03`) but only checked correlation against
-  modal *length* - the rest of the stream's 112 bytes were never
-  systematically characterized. If any field there is a genuine
-  checksum/CRC of the segment payload (plausible, given the stream's
-  name), brute-forcing small CRC polynomials against known segment
-  bytes would give a powerful, cheap, objective validator for candidate
-  decodes - far stronger than "does the byte count come out exact,"
-  which today's sessions repeatedly found admits multiple false
-  positives.
-- **Check whether the flat-to-real transition aligns with a fixed
-  elapsed *time* rather than a fixed segment *count*.** The transition-
-  segment pass found the index varies (11 or 12) across files with the
-  same instrument/method - worth checking the actual retention-time
-  value at the transition point (cross-referencing whatever RT stream
-  the reader already decodes elsewhere in this repo, e.g. the TTFL
-  retention-time index) instead of segment index, in case it's a fixed
-  elapsed-time firmware constant (e.g. "N seconds of lamp warm-up/
-  blanking before real acquisition starts") rather than a coincidence of
-  segment count.
-- **Use physical plausibility (peak shape) as a soft validator, not just
-  exact byte-count matching.** The joint-decoder pass's core problem was
+- **(Revisited 2026-07-20, still open) Test spectral-domain
+  (wavelength-to-wavelength) delta encoding, not just temporal
+  (segment-to-segment) delta encoding.** The 2026-07-20 session found
+  this idea, taken as a pure token-boundary/framing hypothesis, does not
+  actually expand the search space beyond what the continuation-bit and
+  magnitude-threshold sweeps already covered exhaustively - delta-vs-
+  absolute is a reinterpretation of an already-parsed token's *value*,
+  not a new rule for *which bytes form a token*. It remains open and
+  useful, but only as a **validator** for a candidate token-boundary
+  assignment a future width-selection breakthrough would produce, not
+  as an independent decode strategy in its own right. See the
+  2026-07-20 session for the full reasoning.
+- **(Revisited 2026-07-20, still open) Try IEEE-754 half-precision
+  (binary16) floats directly**, not just the word-swapped "PDP-endian"
+  full float32 interpretation already explored. A fixed-width fp16
+  array is now ruled out directly (real-mode body length equals `2 *
+  npts` in only 1 of 3498 real-mode segments checked in one file, 0 of
+  2662 in another). Like spectral-domain delta above, fp16 numeric
+  interpretation only matters once a token-boundary rule exists to
+  apply it to - it doesn't independently help find that rule. See the
+  2026-07-20 session.
+- **(Attempted 2026-07-20, partially resolved) Characterize the
+  `CheckSum` stream (112 bytes) more fully.** Two of the four varying
+  fields are now fully identified: offset 56 and offset 88 (each a
+  little-endian `u32`, not `u16`) are the exact byte sizes of the `3D
+  Raw Data` and `Max Plot` streams respectively, verified with zero
+  mismatches across 77 files - this also corrects the previous session's
+  reading of offset 58 as a boolean "flat vs. real" flag (it's actually
+  the high word of the offset-56 size field). The other two fields
+  (offsets 48 and 80) were confirmed genuinely content-dependent (not
+  a per-session token) but a sweep of 19 CRC-16 polynomials plus
+  Fletcher/Adler/plain-sum checksums against 5 candidate byte ranges
+  found no match - the "brute-force small CRC polynomials" plan this
+  bullet originally proposed has now been tried against the standard
+  polynomial set and come up empty; a future attempt should widen the
+  byte-range search (e.g. per-segment checksums) rather than repeat the
+  same polynomial sweep. See the 2026-07-20 session for full detail.
+- **(Not attempted 2026-07-20, still open) Check whether the
+  flat-to-real transition aligns with a fixed elapsed *time* rather than
+  a fixed segment *count*.** The 2026-07-20 session did not attempt this
+  - there is no existing per-segment retention-time decode for the PDA
+  stream in this codebase to cross-reference against (unlike TTFL's RT
+  index), so establishing one is itself a prerequisite sub-investigation.
+  The transition-segment pass found the index varies (11 or 12) across
+  files with the same instrument/method - worth checking the actual
+  retention-time value at the transition point (cross-referencing
+  whatever RT stream the reader already decodes elsewhere in this repo,
+  e.g. the TTFL retention-time index) instead of segment index, in case
+  it's a fixed elapsed-time firmware constant (e.g. "N seconds of lamp
+  warm-up/blanking before real acquisition starts") rather than a
+  coincidence of segment count.
+- **(Not attempted 2026-07-20, still open) Use physical plausibility
+  (peak shape) as a soft validator, not just exact byte-count
+  matching.** The 2026-07-20 session did not attempt this either, for
+  the same reason as the fp16/spectral-delta ideas above: it requires a
+  candidate token-boundary assignment to validate against, and none of
+  the framing searches to date (including this session's CRC sweep and
+  fp16/spectral-delta scoping analysis) produced one. The joint-decoder
+  pass's core problem was
   a degenerate scoring function admitting many equally-cheap but
   structurally different alignments. Plotting a candidate decode's
   values over time per channel and checking for smooth, single-peaked
