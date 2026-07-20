@@ -60,6 +60,15 @@ is a scannable summary, not a substitute for the detailed sections below
   genuinely content-dependent but remain unidentified after a sweep of
   19 CRC-16 polynomials, Fletcher/Adler/plain-sum checksums, and 5
   candidate byte ranges. See the 2026-07-20 session.
+- **The "split" form's two regions are an exact 256-channel/remainder
+  wavelength split**: region `A` always holds the first 256 wavelength
+  channels, region `tail` holds the remaining `npts - 256`, confirmed
+  with zero exceptions across every flat segment in all 4 locally
+  available split-form files (2 distinct `npts` values). This also
+  fully explains why "split" vs. "symmetric" envelope form correlates
+  with wavelength count: every corpus file with `npts <= 256` uses
+  symmetric, every file with `npts > 256` uses split. See 2026-07-20
+  session 3.
 - Width selection is very likely **driven by actual per-wavelength
   signal magnitude**, not any of: an external per-run lookup table (no
   config/instrument stream correlates with modal length - "external-
@@ -88,16 +97,24 @@ pooled-file and per-file least-squares); the TTFL MS RLE scheme applied
 directly; an external per-run gain/width table stored elsewhere in the
 file; `Max Plot` as an independently-decodable crib; a fixed-width fp16
 (binary16) array (body length essentially never equals `2 * npts`); the
-19-polynomial CRC-16 sweep (plus Fletcher/Adler/plain-sum) against
-`CheckSum` offsets 48 and 80 (see 2026-07-20 session).
+19-polynomial CRC-16 sweep (plus Fletcher/Adler/plain-sum, and an
+Internet-checksum ones'-complement variant) against `CheckSum` offsets
+48 and 80, and those two fields as any of several plain counts/derived
+sizes (see 2026-07-20 sessions 1 and 2); the block-floating-point/
+adaptive-scale hypothesis family in four concrete forms - explicit
+header-as-threshold, classic fixed-width-per-segment, marker-bit escape
+with an algebraically-derived baseline width (a real single-file signal
+that fails cross-file generalization), and a leading-bitmap popcount
+validator (see 2026-07-20 session 2); the region-`tail`-isolated
+marker-bit escape rule, despite passing two randomized-control checks
+(uniform-random bytes and same-multiset-shuffled bytes), traced via a
+physical-plausibility (temporal-smoothness) check to a compensating-
+error artifact affecting all but one of 65 channels, not a real
+per-channel decode (see 2026-07-20 session 3).
 
 **Genuinely open:**
 - The exact per-value token grammar (width-selection rule and numeric
   interpretation) - the core unsolved problem.
-- The functional meaning of the "split" form's two declared-length
-  regions (`A` bytes then `tail` bytes) - confirmed to exist, never
-  explained; the "region-boundary vocabulary check" found no byte-value
-  difference between them.
 - Whether `LSS Raw Data` (the issue's literally-named path) uses the
   *same* encoding as `PDA 3D Raw Data` at all - untested, since every
   locally available file has it empty. See "Further avenues" at the end
@@ -107,14 +124,19 @@ file; `Max Plot` as an independently-decodable crib; a fixed-width fp16
   - not decoded, not attempted beyond the initial characterization. See
   "LC Raw Data..." near the end of this document.
 - `CheckSum` offsets 48 and 80 (confirmed content-dependent, not
-  identified as any standard CRC/checksum algorithm - see 2026-07-20
-  session).
+  identified as any standard CRC/checksum algorithm nor as a plain
+  count/derived size - see 2026-07-20 sessions 1 and 2).
 - Whether fp16 (binary16) numeric interpretation or spectral-domain
   (wavelength-to-wavelength) delta coding is the right *value*
   interpretation for a token, once a token-boundary rule is found -
   both remain plausible as validators, neither has been testable yet
   since no token-boundary rule has been found to validate. See
-  2026-07-20 session.
+  2026-07-20 session 1.
+- Whether a more elaborate adaptive-scale mechanism than the four forms
+  ruled out in 2026-07-20 session 2 exists (e.g. a per-segment gain
+  header using a non-linear transform, or region-local rather than
+  whole-body marker placement) - untested, but the simplest and most
+  natural versions of the idea do not fit.
 
 ## Segment Header
 
@@ -1377,6 +1399,346 @@ own scratch directory (outside the repo, not saved to
 table-based CRC-16 implementation (`crc_fast.py`-equivalent) and
 `crcmod`/`zlib` for cross-checking standard-named variants.
 
+## 2026-07-20 session 2: block-floating-point/adaptive-scale hypothesis family tested and ruled out; CheckSum offsets 48/80 tested against count-based candidates; a quantified false-positive base rate
+
+Direct follow-up to session 1 above, prompted by a specific architectural
+observation: every hypothesis ruled out so far assumed a single *global*
+rule (fixed threshold, fixed escape byte, fixed continuation-bit
+position) applied uniformly across an entire file, but the fact that
+real-mode body length tracks each segment's own signal magnitude
+continuously (not a fixed multiple of `npts`) is exactly the signature
+of a *per-segment adaptive* quantizer - block floating point (a shared
+per-block scale/exponent with narrower per-value mantissas), as used in
+some real instrument firmware, being the leading concrete example. This
+session tried four concrete variants of that family against the payload,
+plus a fresh pass at the two still-unidentified `CheckSum` fields as
+plain counts/derived sizes rather than checksums. **No decode was
+found; the per-value payload grammar remains undecoded.** One negative
+result is worth flagging as a genuine methodological contribution in its
+own right: a directly quantified false-positive base rate for this
+document's own "exact npts count, zero leftover" acceptance criterion,
+which puts a hard number on a pattern this document has flagged
+qualitatively many times before (Max Plot's 38 spuriously-successful
+configs, the width-table retry's 60%->49% sample-size collapse, etc.).
+
+- **(a) Explicit per-segment header as a threshold source: ruled out,
+  weakly.** Hypothesized the body's first 1-2 bytes are a small
+  scale/gain field, separate from the first value token, and that a
+  *global* (same for every segment/file) formula converts that field
+  into a per-segment magnitude threshold for an otherwise-unchanged
+  2-tier walk (byte-under-threshold = 1-byte token, else a wide token).
+  Tried header lengths 0/1/2 bytes x four threshold-derivation formulas
+  (`header_byte_0` directly, `header_byte_1`, low byte of a 2-byte
+  header read as `u16`, `255 - header_byte_0`) x wide-token widths
+  2/3/4, against `MTBLS432/..._12_65...lcd`'s 2662 real-mode segments.
+  Best combination: **21/2662 (0.8%) clean** - weaker than the
+  document's existing fixed-global-threshold sweep, not better. An
+  explicit small header directly usable as a raw threshold value is not
+  the mechanism (though this doesn't rule out a header that needs a
+  more complex, not-yet-guessed transform).
+- **(b) Classic fixed-width-per-block (true block floating point:
+  every value in one segment shares the same width): ruled out.**
+  If each segment's body were `H` header bytes plus `npts` values of a
+  single *per-segment* (but not per-value) width `W`, then `(body_len -
+  H)` should divide evenly by `npts` for the great majority of real
+  segments, for some small `H`. Checked `H` from 0 to 5 bytes against
+  the same 2662-segment sample: the best case (`H=0`) has only
+  **70/2662 (2.6%)** of segments dividing evenly into an integer
+  quotient in the plausible 1-6 byte range (all landing on quotient
+  `3`, consistent with the existing `3 * npts` centering finding
+  already documented, but far short of "most segments"), and every
+  nonzero `H` tried does no better. Per-value width genuinely varies
+  *within* a segment, not just *between* segments - ruling out a pure
+  shared-exponent/fixed-mantissa-width model.
+- **(c) Marker-bit escape with an algebraically-derived baseline width:
+  a real within-file signal that does not survive cross-file testing.**
+  The most promising variant tried: for each segment, `base_w = body_len
+  // npts` and `n_wide = body_len - npts * base_w` are *exactly*
+  computable in advance from body length alone (no fitting) under a
+  "every token is `base_w` or `base_w + 1` bytes" model - so the only
+  free choice is which bit, in which byte of each token's `base_w`-byte
+  prefix, signals "this token is the wider one." Swept all 8 bit
+  positions x 2 polarities x {marker in the token's first byte, marker
+  in its last byte} (32 combinations) against 4 confirmed real-signal
+  `MTBLS432` files (`..._12_65`, `..._34_73`, `..._26_68`, `..._21_29`
+  - all `npts=68`, same instrument/method). Individual files show
+  real-looking signal - `bit=5, polarity=set, marker=first-byte` reaches
+  **868/2663 (32.6%)** clean on `..._34_73` and **1100/2663 (41.3%)** on
+  `..._26_68` - with successes spread across a representative range of
+  body lengths (207-220 bytes out of an overall 202-219 range on
+  `..._34_73`, not clustered at a degenerate edge case) - but **the same
+  configuration gets only 1.1% on `..._12_65` and 8.5% on `..._21_29`**,
+  and no single configuration reaches even 15% on all four files
+  simultaneously: the best worst-case (minimum-across-all-four-files)
+  rate across the full 32-combination sweep is **1.2%**. Since all four
+  files share the same instrument, method, and `npts`, a real shared
+  encoding rule should generalize across them the way the envelope and
+  `u32[2]` facts already do - this doesn't, so it's ruled out as the
+  real rule despite looking compelling on any single file in isolation.
+- **(d) Leading bitmap whose popcount should equal `n_wide`: ruled
+  out.** A cheaper-to-test alternative to (c): instead of an inline
+  per-token marker bit, hypothesized a leading `ceil(npts/8)`-byte
+  (9 bytes for `npts=68`) bitmap at the start of the body (after 0-3
+  header bytes) whose set-bit count equals the algebraically-required
+  `n_wide` for a `base_w=2` model. Checked header offsets 0-3 against
+  both `..._12_65` (2566/2662 segments applicable to the `base_w=2`
+  assumption) and `..._34_73` (only 28/2663 applicable, since that
+  file's real-mode segments center higher, nearer `3 * npts`): **zero
+  matches in every case**. Ruled out.
+- **A quantified false-positive base rate for this document's own
+  "exact count, zero leftover" acceptance criterion** (a methodological
+  finding, not a decode attempt): to sanity-check how much weight a
+  single segment's "a threshold that decodes it cleanly" result should
+  carry, checked - for a random sample of 400 real-mode segments from
+  `..._12_65` - what fraction admit *at least one* successful
+  `(wide_width, threshold)` combination out of the 3 x 256 = 768 tried
+  (the same free 2-tier walk as (a) above, but with no header at all).
+  **191/400 (47.75%) of segments admit at least one spuriously "clean"
+  decode**, averaging **18.8 different working threshold values per
+  successful segment**, and - most tellingly - **body-length statistics
+  for segments that admit a lucky threshold are statistically
+  indistinguishable from those that don't** (mean 202.6 bytes for
+  "admits a threshold" vs. 202.8 bytes for "does not," essentially
+  identical). This means, for this document's typical `npts` scale
+  (dozens to low hundreds of tokens per segment), "there exists a
+  threshold under which this one segment decodes cleanly" is close to a
+  coin flip with no relationship to the segment's actual content -
+  putting a concrete number on why this document has repeatedly found
+  (Max Plot's 38-configuration false-positive set; the width-table
+  retry's 60%->49% sample-size collapse; this session's own item (c)
+  above) that single-file or small-sample "clean decode" rates cannot be
+  trusted without an explicit cross-file or cross-segment generalization
+  check, and why every genuinely-confirmed fact in this document (the
+  envelope, `u32[2]`, the two new `CheckSum` size fields) was checked
+  against every segment of multiple independent files before being
+  written down as confirmed.
+- **`CheckSum` offsets 48 and 80 tested against plain counts and derived
+  sizes, not just checksum algorithms: no match found.** Before
+  resuming the checksum-algorithm search from session 1, tested whether
+  offset 48 (and separately offset 80) is simply a count or a
+  differently-scoped size rather than a hash, using the two files with
+  precisely known values (`..._1_63`/`..._20_66`/`..._30_71`/`..._3_64`/
+  `..._44_76`, all `nseg=2674`, offset 48 = `30350`; `..._37_74`,
+  `nseg=2673`, offset 48 = `12815`). First verified the assumption
+  the candidate-count hypotheses depend on - that every segment always
+  declares exactly `npts` points (i.e. total declared point count really
+  is `nseg * npts`) - directly against `u32[2]` across both files' full
+  segment lists: true in both, zero exceptions. Checked offset 48/80
+  against: `nseg` (2674/2673), `npts` (68), `nseg * npts` (181832/181764),
+  total stream bytes (already confirmed as offset 56, not 48), total
+  payload bytes with segment headers stripped (192528/192456), total
+  body bytes with the envelope also stripped (181832/181764, matching
+  `nseg * npts` exactly since these are fully-flat files - a useful
+  independent confirmation that flat-mode body length truly is exactly
+  `npts` with no other overhead, but not a match for offset 48/80
+  either), total 24-byte segment-header bytes (64176/64152), and the
+  `Status` stream's own varying fields (offset 4 confirms `nseg`
+  exactly, as already suspected, but offset 20 - `6784`/`6144` - turned
+  out to depend only on `nseg` too, identical between `..._1_63` and two
+  *different-content* real-signal files sharing the same `nseg`, so it
+  cannot be the source of offset 48/80's real-vs-real variation either).
+  **None matched.** Also tried an Internet-style (RFC 1071) 16-bit
+  ones'-complement running-sum checksum - initially looked promising
+  (one accidental exact match against `..._1_63`'s `Max Plot` stream
+  for offset 80), but this did not reproduce against `..._12_65` or
+  `..._34_73` with the same formula and is discarded as coincidental (a
+  flat file's checksum has limited entropy to begin with, making a
+  1-in-3-file accidental match unsurprising). This strengthens, rather
+  than replaces, session 1's conclusion: offsets 48 and 80 are
+  genuinely content-dependent (not simple counts, not opaque
+  per-session tokens) but their exact algorithm remains unidentified
+  after both a broad standard-checksum sweep (session 1) and this
+  session's count/derived-size and Internet-checksum checks.
+
+**Verdict**: the block-floating-point/adaptive-scale hypothesis family,
+in the four concrete forms tried, is ruled out - most instructively via
+(c), which demonstrates a real within-file statistical signal that
+fails a proper cross-file generalization check, and the quantified
+false-positive base-rate finding explains *why* that kind of signal is
+expected to appear by chance at this token-count scale. This does not
+close the door on every possible adaptive-scale mechanism (a genuine
+per-segment gain header using a transform more complex than the ones
+tried in (a), or a marker mechanism at a byte offset within `A`/`tail`
+subregions rather than uniformly across the concatenated body, remain
+untested), but the most natural, simplest versions of the idea do not
+fit. `CheckSum` offsets 48/80 remain the least-understood pair of
+fields in this document; a future session should treat them as lower
+priority than the per-value grammar itself unless a stronger structural
+clue emerges (per session 1's recommendation, unchanged by this
+session).
+
+Scripts: ad hoc, run via disposable Python files under this session's
+own scratch directory (outside the repo, not saved to
+`re/src/analysis/`), extending session 1's `common.py`
+(`iter_segments`/`body_of`) with new `walk_fixed2tier` (2-tier
+magnitude-threshold walker with a skippable header) and `walk_bfp`
+(marker-bit block-floating-point walker) helper functions.
+
+## 2026-07-20 session 3: the "split" form's two regions are a real, exact 256-channel/remainder wavelength split (resolved); a promising marker-bit signal traced to a compensating-error artifact, not a decode
+
+Direct follow-up to session 2's region-local suggestion. While setting
+up a per-region rerun of session 2's marker-bit test, this session first
+had to establish how many of a stream's `npts` wavelength channels
+actually live in region `A` versus region `tail` - previously confirmed
+to exist (session 1's envelope work) but explicitly flagged as
+"never explained" (session 1's factsheet). That turned out to have a
+clean, exact answer, which is this session's first real result. The
+second half of the session used that answer to retry session 2's
+marker-bit hypothesis region-by-region, found a statistically genuine
+(not-by-chance) signal in region `tail` - but then, applying the
+"physical plausibility as validator" idea from this document's own
+"further avenues" list for the first time, showed that signal does not
+correspond to a correct per-channel decode. **The per-value payload
+grammar remains undecoded**, but one previously-open structural
+question is now closed, and a methodologically important cautionary
+result is recorded precisely.
+
+- **Resolved: region `A` always holds exactly the first 256 wavelength
+  channels; region `tail` holds the remaining `npts - 256`.** Checked
+  directly against every flat/baseline segment (not just the first one)
+  in all four locally available split-form files: `MSV000084197/
+  20190607_NM16.lcd` (`npts=321`) and `PXD025121/1.lcd`, `/10.lcd`,
+  `/11.lcd` (`npts=327` each). At baseline, every value is exactly 1
+  byte (session 1's already-confirmed flat-mode fact), so a flat
+  segment's region-`A`/`tail` *byte* lengths are also directly its
+  region *value counts* - and in **every flat segment checked across
+  all four files, `len(A) == 256` exactly, with zero exceptions**
+  (`321 - 256 = 65` values in `tail` for `MSV000084197`; `327 - 256 =
+  71` for the three `PXD025121` files). This resolves session 1's
+  "genuinely open" question about what the two declared-length regions
+  mean: they are not an arbitrary or data-dependent split, or a
+  "coarse array + exception list" (already ruled out in session 1 by
+  the vocabulary check) - they are a fixed partition of the wavelength
+  axis at channel index 256, extremely plausibly reflecting a
+  256-entry (`2^8`, i.e. one-byte-addressable) hardware buffer or
+  register width in the PDA detector's acquisition electronics. This
+  also gives a complete, satisfying answer to session 1's other open
+  question - why "split" vs. "symmetric" envelope form correlates with
+  wavelength count: **every corpus file with `npts <= 256` uses the
+  symmetric (single-region) form, and every file with `npts > 256`
+  uses the split (two-region) form**, consistent with a design where a
+  wavelength count that fits inside one 256-slot buffer needs no split,
+  and one that doesn't gets divided into "the first 256" plus "the
+  overflow." (This corpus has no file with `npts` near exactly 256 to
+  test the boundary itself, so the precise cutoff semantics - e.g.
+  whether `npts == 256` exactly would still split - remain unconfirmed,
+  but the pattern is exact and exceptionless for every `npts` value
+  actually present locally: `68`, `321`, `327`.)
+- **Retrying session 2's marker-bit escape hypothesis per-region (now
+  that the true per-region value counts are known) finds a real,
+  well-controlled signal in region `tail` alone.** Using `n_A = 256`
+  and `n_tail = npts - 256` (exact, not estimated) to compute each
+  region's own `base_w`/`n_wide` independently, and sweeping the same
+  32 marker-bit configurations from session 2 separately against each
+  region: **region `A` shows no comparable signal** (best config only
+  29/3498 = 0.8% clean on `MSV000084197`, no better than session 2's
+  whole-body attempts). **Region `tail` shows something real**: with
+  `bit_pos=5, polarity=set-means-wide, marker-in-first-byte`, clean
+  (exact `n_tail`-token, zero-leftover) walks succeed on **2479/3498
+  (70.9%) of `MSV000084197`'s real-mode segments**, and the *same*
+  configuration, unchanged, succeeds on **2040/6187 (33.0%)**,
+  **2129/6179 (34.5%)**, and **2384/6179 (38.6%)** of the three
+  `PXD025121` files respectively - a real cross-file signal, unlike
+  every marker-bit config tried against the symmetric-form `MTBLS432`
+  files in session 2. Two independent randomized controls confirm this
+  is not a base-rate artifact of the search space (the concern
+  session 2's false-positive-rate finding raised): (1) replacing each
+  segment's real tail bytes with **uniformly random bytes of the same
+  length** gives **0/3498 (0.0%)** clean on `MSV000084197` and
+  1.4%-5.2% on the three `PXD025121` files (vs. 33-39% real); (2) the
+  stricter control - **shuffling each segment's own real bytes** (same
+  exact byte-value multiset, scrambled order, controlling for the
+  payload's well-documented non-uniform leader-byte distribution, not
+  just for byte value frequency) - gives **7/3498 (0.2%)** on
+  `MSV000084197`, vs. 70.9% for the real, unshuffled order. Real byte
+  *order*, not just byte *content*, matters to this rule succeeding -
+  genuine evidence of positional structure in region `tail`'s bytes.
+- **But decoding actual values under this rule and checking them for
+  physical plausibility - the "further avenues" list's avenue 5,
+  attempted here for the first time - shows the walk is not finding
+  real per-channel boundaries.** Decoded all `n_tail` channel values
+  (raw little-endian integer per token) for every segment that walked
+  cleanly under the rule above, then measured each channel's
+  segment-to-segment smoothness (mean relative step size between
+  consecutive successfully-decoded segments; lower means smoother,
+  more chromatogram-like). **Channel index 0 of the tail region is
+  dramatically smooth (mean relative step 0.024)** - but **every other
+  channel (indices 1 through 64) ranges from 0.25 to 1.13**,
+  statistically indistinguishable from a temporally-shuffled-order
+  control's aggregate score (0.96) and from pure noise. Only one
+  channel out of 65 looks like real data; the other 64 do not. Traced
+  this to a concrete mechanism, not just a vague "it's noisy": in every
+  one of the **3445 segments** where the marker fires "wide" for
+  channel 0 (base 1 byte extended to 2), **the second byte of that
+  "2-byte" token is exactly `0x00`, 3445/3445 times, no exceptions**.
+  This is much more consistent with channel 0's real width being a
+  *plain 1 byte* (the marker misfiring on a data byte that happens to
+  have bit 5 set, which is common given the payload's already-documented
+  `0x20`/`0x3f`-leader-byte concentration) and the walk's "second byte"
+  actually being **channel 1's own real first byte** - which happens to
+  be `0x00` essentially every time, i.e. wavelength channel 257 in this
+  file is very plausibly a genuinely dead/unmonitored edge channel that
+  reads exactly zero. The walk still reaches the correct *total* token
+  count and byte length despite this misclassification because the
+  very next channel's true value is trivially small - a directly
+  observed, concrete instance of the **compensating-error phenomenon**
+  session 2's false-positive-rate finding predicted abstractly: passing
+  the "exact count, zero leftover" test (even one that also beats two
+  different randomized controls) does not guarantee the token
+  boundaries themselves are correct, only that *some* combination of
+  possibly-wrong boundary choices happened to sum to the right total.
+- **Follow-up: confirmed unconditionally, cross-file, with no
+  marker-bit assumption at all.** Dropped the marker-bit framing
+  entirely and checked directly: across all four split-form files
+  (`MSV000084197` plus all three `PXD025121` files, **15,043 real-mode
+  segments total**), region `tail`'s raw byte at position 1 is exactly
+  `0x00` in **100.00% of segments, zero exceptions in any file**, and
+  the raw byte at position 0 stays in a narrow, smoothly-varying range
+  in every file (`87`-`141` across the four files' means of `107.3`-
+  `120.6`) fully consistent with the already-observed channel-0
+  temporal smoothness. This is strong, clean, marker-bit-independent
+  evidence that region `tail` position 0 is genuinely a plain 1-byte
+  token and position 1 is a hard-wired/dead channel reading a constant
+  zero - reproducible across every file checked, not a `MSV000084197`
+  quirk. Byte position 2 onward, by contrast, is dominated by the same
+  `0x20`/`0x3f`/`0x3e`-ish leader-byte values already documented
+  throughout this document for the undecoded payload in general (checked
+  via a byte-value histogram at position 2: the four most common values,
+  accounting for the large majority of segments, are `0x3c`-`0x3f`
+  and `0x20`-`0x21`) - i.e. the genuine open grammar problem picks back
+  up at channel index 2, unchanged from the rest of this document; only
+  the first two channels of region `tail` are special-cased edge
+  channels, not a hint about the general per-value rule.
+- **Verdict**: region `tail`'s bytes do carry genuine, non-random,
+  order-dependent structure that this specific marker-bit rule
+  partially captures (the real-vs-shuffled-byte comparison is
+  decisive on that point) - but the rule itself is not the correct
+  per-channel grammar, as the physical-plausibility check demonstrates
+  concretely rather than just abstractly. This is a case where a
+  hypothesis survives a strong statistical control yet still fails a
+  physical-plausibility check, which is exactly why this document's
+  "further avenues" list included the physical-plausibility validator
+  in the first place - and it is the first time that validator has
+  actually been applied to a candidate decode, rather than remaining a
+  suggestion with nothing yet to validate. A future session picking
+  this up should not restart from session 2's whole-body marker-bit
+  framing; the more promising, narrower thread is region `tail`
+  specifically, and the concrete clue that channel 257 (tail-region
+  index 1) reads as a near-constant `0x00` across thousands of segments
+  in this file is a specific, reproducible, low-effort thing to verify
+  and build on directly (e.g. check whether it holds in the
+  `PXD025121` files too, and whether channel 0 is genuinely 1 byte wide
+  in the great majority of segments once decoded without the spurious
+  marker).
+
+Scripts: ad hoc, run via disposable Python files under this session's
+own scratch directory (outside the repo, not saved to
+`re/src/analysis/`), extending session 2's `walk_bfp` with a
+`split_regions` helper (extracts `A`/`tail` sub-bodies from a "split"
+form payload using the already-confirmed `A`/`tail` length prefix/
+suffix fields) and a `decode_bfp` variant that returns actual decoded
+values (not just walk success) for the physical-plausibility check.
+
 ## LC Raw Data - a different, unrelated chromatogram stream
 
 While looking for real `LSS Raw Data` chromatogram content (all empty in
@@ -1413,6 +1775,27 @@ Beyond the single recommendation in the 2026-07-19 closing summary
 are additional, not-yet-tried directions - none executed this round, so
 treat them as leads, not findings:
 
+- **(New, from 2026-07-20 session 3; partially followed up already -
+  see below) Push the region-`tail` walk past channel index 2.**
+  Session 3 confirmed, unconditionally and across all four split-form
+  files (15,043 segments, zero exceptions), that region `tail` position
+  0 is a plain 1-byte token in a narrow smoothly-varying range and
+  position 1 is a hard-wired constant `0x00` - real, reproducible,
+  edge-channel behavior, not a coincidence of one file's chemistry (so
+  the "check it holds in `PXD025121` too" step from this bullet's
+  original framing is now done). What's still untried: manually,
+  by-hand decoding region `tail` starting from `base_offset = 2` (i.e.
+  treating positions 0-1 as a solved 2-byte fixed prefix and *not*
+  applying any marker-bit assumption to them), to see how far a
+  directly-inspected, no-global-rule-assumed walk gets through the
+  remaining `n_tail - 2` channels before hitting the first genuine
+  ambiguity - channel index 2 onward reverts to the same
+  `0x20`/`0x3f`-leader-byte-dominated bytes as the rest of this
+  document's undecoded payload, so this is really a narrower, smaller
+  restatement of the core open problem, not a shortcut around it, but
+  the much smaller channel count (63-69 remaining channels instead of
+  256-327) may make manual inspection more tractable than it is against
+  a full segment.
 - **Decode the simpler, real `LC Raw Data/Chromatogram Ch5`/`Ch6`
   stream instead of (or before) `PDA 3D Raw Data`.** It's populated,
   structurally simpler (one giant segment per channel, not thousands of
@@ -1498,3 +1881,28 @@ treat them as leads, not findings:
   checking zero-leftover exactness - could help disambiguate between
   otherwise-tied candidate parses, the same way a human would sanity-
   check a chromatogram by eye.
+- **(New, from 2026-07-20 session 2) Region-local rather than
+  whole-body marker placement for the block-floating-point/marker-bit
+  family.** Session 2's item (c) tested a per-token marker bit against
+  the whole concatenated body (the `A`+`tail` regions treated as one
+  token stream, per session 1's "no vocabulary difference between
+  regions" finding). It did not try treating `A` and `tail` as two
+  *independently scaled* blocks, each with its own `base_w`/`n_wide`
+  derived from its own sub-length rather than the combined body length -
+  a real block-floating-point scheme could plausibly reset its
+  effective scale at the region boundary even if the byte-level
+  vocabulary looks similar on both sides (vocabulary similarity says
+  nothing about whether the *width-selection arithmetic* is shared).
+  This is a cheap variant of an already-built test (`walk_bfp` from
+  session 2) - re-run it with `A` and `tail` split before computing
+  `base_w`/`n_wide` for each, rather than merged.
+- **(New, from 2026-07-20 session 2) A non-linear or table-driven
+  transform from an explicit per-segment header to a threshold.**
+  Session 2's item (a) only tried using a candidate header byte
+  *directly* as a threshold (or its bitwise complement). A real gain
+  header more plausibly indexes a small lookup table (as in ADPCM step
+  tables) rather than being usable as a raw magnitude cutoff - this
+  wasn't tried since it requires guessing the table itself, which is a
+  much larger search than session 2's budget allowed, but is a more
+  faithful test of the "explicit per-segment scale field" idea than
+  what was actually tried.

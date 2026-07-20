@@ -21,14 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Further PDA/chromatogram payload investigation
   (Sigilweaver/OpenSZRaw#2, contributed by @Nabejo): identified 2 of the
   4 varying fields in `PDA 3D Raw Data/CheckSum` as exact stream byte
-  sizes (correcting an earlier "flat vs. real flag" reading), ruled out
-  a 19-polynomial CRC-16 sweep (plus Fletcher/Adler/plain-sum) for the
-  remaining 2 fields, ruled out a fixed-width fp16 (binary16) array, and
-  clarified that the fp16 and spectral-domain-delta ideas can only
-  function as validators for a token-boundary rule, not as independent
-  framing searches. The per-point payload grammar itself is still
-  undecoded - see `docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20
-  session for full detail.
+  sizes (correcting an earlier "flat vs. real flag" reading); ruled out
+  a 19-polynomial CRC-16 sweep (plus Fletcher/Adler/plain-sum and an
+  Internet-checksum variant) and several plain-count/derived-size
+  candidates for the remaining 2 fields; ruled out a fixed-width fp16
+  (binary16) array and a block-floating-point/adaptive-scale hypothesis
+  family in four concrete forms, quantifying a ~48% false-positive base
+  rate for this document's own zero-leftover acceptance test along the
+  way; resolved a separate open question by finding the "split" envelope
+  form's two regions are an exact 256-wavelength-channel/remainder
+  split (also explaining why "split" vs. "symmetric" form correlates
+  with wavelength count); and showed, via a physical-plausibility check,
+  that a marker-bit signal which passed two randomized-control tests was
+  nonetheless a compensating-error artifact rather than a real decode.
+  The per-point payload grammar itself is still undecoded - see
+  `docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20 sessions 1-3 for
+  full detail.
 
 ## [0.1.0] - 2026-07-18
 

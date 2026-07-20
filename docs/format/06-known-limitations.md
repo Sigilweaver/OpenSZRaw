@@ -293,5 +293,12 @@ the `3D Raw Data` and `Max Plot` streams (not a flat/real flag as
 previously read - see the correction note and dated session in
 `docs/format/04`), and ruled out 19 standard CRC-16 polynomials plus
 several other common checksum constructions for the remaining 2 fields.
-Neither finding decodes the payload; the per-value grammar is still
-open.
+A follow-up pass the same day resolved a separate open structural
+question - the "split" envelope form's two declared-length regions are
+an exact 256-wavelength-channel/remainder split, which also explains
+why "split" vs. "symmetric" envelope form correlates with wavelength
+count - and ruled out a block-floating-point/adaptive-scale hypothesis
+family (including one candidate that passed two randomized-control
+checks but was then shown, via a physical-plausibility check, to be a
+compensating-error artifact rather than a real decode). None of these
+findings decode the per-value payload; that grammar is still open.
