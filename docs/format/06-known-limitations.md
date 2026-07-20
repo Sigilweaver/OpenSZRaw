@@ -300,5 +300,13 @@ why "split" vs. "symmetric" envelope form correlates with wavelength
 count - and ruled out a block-floating-point/adaptive-scale hypothesis
 family (including one candidate that passed two randomized-control
 checks but was then shown, via a physical-plausibility check, to be a
-compensating-error artifact rather than a real decode). None of these
-findings decode the per-value payload; that grammar is still open.
+compensating-error artifact rather than a real decode). A further
+follow-up pass re-ran the decode sweeps with the corrected per-region
+target counts this finding implies, found two more signals that looked
+promising at first (one a sharp threshold cliff, one a 67.8%-clean
+single-file result), and ruled both out after decoding actual values -
+the second of which exposed and fixed a real gap in the
+physical-plausibility check itself (a mode-dominated, mostly-repeated
+decode can look deceptively "smooth" under a naive mean-step metric).
+None of these findings decode the per-value payload; that grammar is
+still open.

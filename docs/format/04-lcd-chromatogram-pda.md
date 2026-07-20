@@ -84,6 +84,14 @@ is a scannable summary, not a substitute for the detailed sections below
   but no working decoder has been built from it yet; the joint-DP's
   scoring function is provably not selective enough (width agreement
   isn't monotonic with solution cost).
+- **Methodological: a physical-plausibility (temporal-smoothness) check
+  must also test each channel's mode fraction, not just mean
+  relative step.** A decode that is a frozen, repeated value most of
+  the time with rare large jumps trivially minimizes mean relative step
+  while being the opposite of real chromatography; 2026-07-20 session 4
+  found this the hard way (a 67.8%-clean, apparently-smooth single-file
+  `MTBLS432` result turned out to be up to 96% mode-dominated per
+  channel) and revised the check accordingly.
 
 **Ruled out** (see "This session's additional ruled-out hypotheses" and
 "further ruled-out hypotheses" for full detail): standard unsigned
@@ -110,7 +118,15 @@ marker-bit escape rule, despite passing two randomized-control checks
 (uniform-random bytes and same-multiset-shuffled bytes), traced via a
 physical-plausibility (temporal-smoothness) check to a compensating-
 error artifact affecting all but one of 65 channels, not a real
-per-channel decode (see 2026-07-20 session 3).
+per-channel decode (see 2026-07-20 session 3); the corrected-target-
+count magnitude-threshold and continuation-bit sweeps against region
+`A` (target 256) and region `tail` (target `npts - 256`) alone - region
+`tail`'s sharp-cliff threshold=32 hit reproduces session 3's exact
+channel-0/1 artifact under a different rule, and a fresh `MTBLS432`
+sweep's single-file 67.8%-clean/"66-of-68-channels-smooth" result
+failed cross-file generalization and was shown to be a smoothness-
+metric artifact (mode-dominated decoded values, not real drift) rather
+than a genuine decode (see 2026-07-20 session 4).
 
 **Genuinely open:**
 - The exact per-value token grammar (width-selection rule and numeric
@@ -1739,6 +1755,158 @@ form payload using the already-confirmed `A`/`tail` length prefix/
 suffix fields) and a `decode_bfp` variant that returns actual decoded
 values (not just walk success) for the physical-plausibility check.
 
+## 2026-07-20 session 4: re-running the threshold/continuation-bit sweeps with the corrected per-region target counts finds two more dramatic-looking cliffs, both root-caused to artifacts - plus a methodological correction to the physical-plausibility check itself
+
+Direct follow-up to session 3, prompted by a specific observation:
+session 1's original "per-region parsing instead of whole-body parsing"
+sweep (in the "further ruled-out hypotheses" section, well before
+session 3 established the 256-channel region boundary) isolated region
+`A` but still required it to decode to exactly `npts` tokens - an
+internally inconsistent test, since region `A` is now known to hold
+only the first 256 of `npts` channels, not all of them. This session
+re-ran the magnitude-threshold and continuation-bit sweeps against both
+regions with the corrected target counts (`256` for region `A`,
+`npts - 256` for region `tail`), plus a fresh sweep against `MTBLS432`
+(no region split to get wrong in the first place, since `68 <= 256`).
+**No working decode was found.** Two sweeps produced dramatic,
+cliff-shaped signals that initially looked like real hits - both were
+run all the way through to actual value decoding and a
+physical-plausibility check (per this document's own established
+practice) and both turned out to be artifacts, for two different
+reasons. The second of those reasons is a genuine methodological
+correction to the physical-plausibility check itself, worth any future
+session internalizing before trusting a "smooth" result.
+
+- **Region `A` (target=256): no signal, at either sweep.** Magnitude
+  threshold: best `239/3498 (6.8%)` at `threshold=31, wide_w=2` -
+  barely above the levels already documented as noise elsewhere in this
+  document. Continuation-bit: best `76/3498 (2.2%)`. Physical
+  plausibility of the threshold sweep's best candidate: only `2/256`
+  channels smooth by the (subsequently-revised, see below) smoothness
+  metric - consistent with edge-channel artifacts, not a real decode.
+  Region `A`, even at its correct 256-channel target, remains as
+  undecoded as the rest of this document's whole-body attempts.
+- **Region `tail` (target = `npts - 256`): a dramatic, razor-sharp cliff
+  - traced to the same channel-0/1 artifact session 3 already
+  diagnosed, not new structure.** The magnitude-threshold sweep found
+  something that initially looked like a breakthrough: `threshold=32,
+  wide_w=2` decodes **2518/3498 (72.0%)** of `MSV000084197`'s region
+  `tail` cleanly, and the *exact same* configuration reaches **33.4%,
+  35.3%, and 40.2%** on the three `PXD025121` files - a real cross-file
+  signal, confirmed against both a uniform-random-byte control
+  (0.1%-9.4% across the four files) and a same-multiset-shuffle control
+  (4.7%-14.8%), both decisively beaten. Critically, the sweep shows a
+  **razor-sharp cliff, not a gradual peak**: `71.9%` at `threshold=31`
+  down to essentially `0%` at `threshold=33` for the whole-tail walk (a
+  drop of two full orders of magnitude over a threshold change of `1`),
+  which mechanically traces to `0x20` (decimal `32`) being the single
+  most common byte value in this payload (already documented
+  extensively elsewhere in this document) - flipping the threshold from
+  `32` to `33` reclassifies every occurrence of that one very common
+  byte value from "wide" to "narrow" at once, which is enough on its own
+  to explain a sharp transition without it necessarily marking a true
+  semantic boundary. Decoding actual values and checking channel-by-
+  channel temporal smoothness reproduced **exactly** session 3's
+  finding: channel 0 alone is smooth (mean relative step `0.024`, all
+  four files), every other channel is noise-like (`0.6`-`1.1`). Directly
+  confirmed this is the *same* artifact, not a coincidentally similar
+  one: `byte>=32` and `bit5-set` (session 3's marker rule) agree on
+  `82.4%` of individual bytes checked, channel 0 is classified "wide"
+  in **100%** of segments under this rule too, and its supposed second
+  byte is `0x00` in 100% of those cases - the identical compensating-
+  error mechanism session 3 root-caused, now shown to reproduce under a
+  completely different-looking rule (a plain magnitude threshold, not a
+  specific bit position), which is itself informative: **the artifact
+  is robust to how the "wide" decision is framed, because it isn't
+  really about a decision rule at all - it's a structural fact about
+  channel 1 always being a hard-zero edge channel, which any rule that
+  classifies channel 0 as "wide" will trip over the same way.**
+  Stripping the confirmed 2-byte fixed prefix (channel 0 = 1 byte,
+  channel 1 = constant `0x00`) and re-sweeping the remaining `n_tail -
+  2` channels with the corrected target found only a smooth, gradual
+  peak (not a cliff) topping out at **976/3498 (27.9%)** at
+  `threshold=27` - and decoding that candidate showed **0 of 63**
+  channels smooth, with per-channel mode-fractions of only `0.7%-1.9%`
+  (i.e. genuinely close to uniformly random, the opposite of
+  mode-dominated). Channels 2 and beyond in region `tail` remain
+  undecoded.
+- **`MTBLS432` (symmetric form, no region-boundary confound): a
+  single-file result that looked like a genuine decode under this
+  document's existing smoothness metric, and was not - which surfaced a
+  real flaw in the metric itself.** A fresh magnitude-threshold sweep
+  against `..._12_65...lcd`'s 2662 real-mode segments found
+  `threshold=1, wide_w=3` (i.e. "a literal `0x00` byte is a 1-byte
+  zero, anything else starts a 3-byte token") decodes **1805/2662
+  (67.8%)** cleanly - and, alarmingly, the existing mean-relative-step
+  smoothness check reported **66 of 68 channels "smooth"** (values
+  `0.03`-`0.36`, only two channels above the `0.3` cutoff this document
+  has been using). Before accepting this, cross-file testing (the same
+  discipline session 2/3 already established) was run first: the exact
+  same configuration reaches only **14/2663 (0.5%)** clean on
+  `..._34_73...lcd`, **612/2663 (23.0%)** on `..._26_68...lcd`, and
+  **363/2662 (13.6%)** on `..._21_29...lcd` - all four files sharing
+  the same instrument, method, and `npts=68` - an immediate
+  disqualifying sign on its own. But the more important finding came
+  from asking *why* `..._12_65...lcd` alone looked so clean: **the
+  mean-relative-step metric is fooled by highly repetitive (mode-
+  dominated) decoded sequences.** Checking the value distribution per
+  channel (not just the step-to-step differences) shows every one of
+  the 68 channels has a single dominant repeated value accounting for
+  **41%-96% of its 1805 decoded segments** (most channels 80%-95%), with
+  the *non-repeated* values landing all over an essentially uniform
+  24-bit range (min/max spanning `~10^4` to `~1.67*10^7`, no
+  concentration) rather than smoothly drifting from the dominant value.
+  A signal that is "the same fixed number 90% of the time, then jumps
+  to an unrelated large random-looking number 10% of the time" trivially
+  minimizes a *mean* relative-step statistic (nearly all steps are
+  exactly zero) while being the *opposite* of physically plausible
+  chromatography, which should show continuous, non-repeating drift as
+  a peak rises and falls. This is consistent with, and mechanically
+  explained by, an already-documented fact: `MTBLS432` real-mode body
+  length is tightly centered near `3 * npts` bytes (the "width-table
+  retry" session, well before this one), so a rule that treats nearly
+  every byte as the start of a 3-byte token will often land on the
+  *correct total length* by roughly chunking the body into thirds,
+  without the chunk boundaries corresponding to genuine per-channel
+  values - and apparently tends to re-derive the *same* misaligned chunk
+  boundary (hence the same wrong "value") on the majority of segments
+  in this one file specifically, which is plausible given how much of
+  this file's own body-length distribution is already known to cluster
+  tightly (`194` bytes in `1767/2674` segments per the factsheet). A
+  continuation-bit sweep against the same file found nothing better
+  (`34/2662`, `1.3%`). **This route is closed for `MTBLS432` as tried.**
+- **Methodological correction, worth recording precisely so it doesn't
+  recur**: this document's physical-plausibility check (introduced in
+  session 3) computed only the mean relative step between consecutive
+  decoded values per channel. This session shows that statistic alone
+  is insufficient - it can be minimized by a decode that is mostly a
+  frozen, repeated (mode-dominated) value with rare large excursions,
+  which is not real physical smoothness. **Any future
+  physical-plausibility check should also report each channel's mode
+  fraction** (the proportion of decoded values equal to that channel's
+  single most common value) **and treat a high mode fraction (this
+  session saw up to 96%) as disqualifying, not confirming** - genuine
+  chromatographic data should show low repetition and continuous drift,
+  not a dominant constant. Both of this session's sweeps were re-checked
+  against this corrected two-part test (low mean relative step *and* low
+  mode fraction); neither survived it.
+
+**Verdict**: the corrected per-region target counts did not produce a
+working decode, and the two most promising-looking candidates this
+session found were both run through to real value decoding and a
+(now-corrected) physical-plausibility check rather than being reported
+as hits on the strength of a clean walk rate or a sharp threshold cliff
+alone - both failed once actually inspected, for concretely identified,
+different reasons. The per-value payload grammar for both the split and
+symmetric envelope forms remains undecoded.
+
+Scripts: ad hoc, run via disposable Python files under this session's
+own scratch directory (outside the repo, not saved to
+`re/src/analysis/`), building `region_sweep.py` (generalized magnitude-
+threshold and continuation-bit walkers/sweepers parameterized by target
+token count and optional header skip, reusable against any region) and
+`decode_threshold.py` on top of session 3's `regions.py` helper.
+
 ## LC Raw Data - a different, unrelated chromatogram stream
 
 While looking for real `LSS Raw Data` chromatogram content (all empty in
@@ -1775,27 +1943,29 @@ Beyond the single recommendation in the 2026-07-19 closing summary
 are additional, not-yet-tried directions - none executed this round, so
 treat them as leads, not findings:
 
-- **(New, from 2026-07-20 session 3; partially followed up already -
-  see below) Push the region-`tail` walk past channel index 2.**
+- **(New, from 2026-07-20 session 3; followed up in session 4 with a
+  negative result) Push the region-`tail` walk past channel index 2.**
   Session 3 confirmed, unconditionally and across all four split-form
   files (15,043 segments, zero exceptions), that region `tail` position
   0 is a plain 1-byte token in a narrow smoothly-varying range and
   position 1 is a hard-wired constant `0x00` - real, reproducible,
-  edge-channel behavior, not a coincidence of one file's chemistry (so
-  the "check it holds in `PXD025121` too" step from this bullet's
-  original framing is now done). What's still untried: manually,
-  by-hand decoding region `tail` starting from `base_offset = 2` (i.e.
-  treating positions 0-1 as a solved 2-byte fixed prefix and *not*
-  applying any marker-bit assumption to them), to see how far a
-  directly-inspected, no-global-rule-assumed walk gets through the
-  remaining `n_tail - 2` channels before hitting the first genuine
-  ambiguity - channel index 2 onward reverts to the same
-  `0x20`/`0x3f`-leader-byte-dominated bytes as the rest of this
-  document's undecoded payload, so this is really a narrower, smaller
-  restatement of the core open problem, not a shortcut around it, but
-  the much smaller channel count (63-69 remaining channels instead of
-  256-327) may make manual inspection more tractable than it is against
-  a full segment.
+  edge-channel behavior. Session 4 followed up automatically (stripping
+  the 2-byte prefix, re-running the magnitude-threshold and
+  continuation-bit sweeps against the remaining `n_tail - 2` channels
+  with the correspondingly corrected target count): found only a weak,
+  gradual (not sharp-cliff) peak topping out at 27.9% clean, and the
+  decoded values under that candidate are indistinguishable from random
+  noise (0 of 63 channels physically plausible, per-channel mode
+  fractions of only 0.7%-1.9%). The automated sweep infrastructure does
+  not find anything here. What remains genuinely untried is fully
+  manual, by-hand byte inspection of a handful of individual segments'
+  channel-2-onward bytes (not a parameterized sweep) - channel index 2
+  onward reverts to the same `0x20`/`0x3f`-leader-byte-dominated bytes
+  as the rest of this document's undecoded payload, so this is really a
+  narrower, smaller restatement of the core open problem, not a
+  shortcut around it, but the much smaller channel count (63-69 instead
+  of 256-327) may still make manual inspection more tractable than it
+  is against a full segment.
 - **Decode the simpler, real `LC Raw Data/Chromatogram Ch5`/`Ch6`
   stream instead of (or before) `PDA 3D Raw Data`.** It's populated,
   structurally simpler (one giant segment per channel, not thousands of

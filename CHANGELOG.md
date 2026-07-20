@@ -34,8 +34,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with wavelength count); and showed, via a physical-plausibility check,
   that a marker-bit signal which passed two randomized-control tests was
   nonetheless a compensating-error artifact rather than a real decode.
-  The per-point payload grammar itself is still undecoded - see
-  `docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20 sessions 1-3 for
+  A follow-up pass re-ran the threshold/continuation-bit sweeps with the
+  now-corrected per-region target counts, found two more dramatic-
+  looking single-file/single-region signals, and ran both all the way
+  through to actual value decoding before ruling them out too (one
+  reproduced the same compensating-error artifact under a sharper
+  threshold framing; the other exposed a real flaw in the existing
+  physical-plausibility check itself - a decode that repeats the same
+  value 80-96% of the time can look "smooth" by mean relative step
+  alone - which the check has now been revised to catch). The per-point
+  payload grammar itself is still undecoded - see
+  `docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20 sessions 1-4 for
   full detail.
 
 ## [0.1.0] - 2026-07-18
