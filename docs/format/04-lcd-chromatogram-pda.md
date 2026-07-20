@@ -17,6 +17,81 @@ See "LC Raw Data - a different, unrelated chromatogram stream" near the
 end of this document for the one real chromatogram-shaped stream found
 locally, at a different path than the issue names.
 
+## Factsheet (quick reference - see the dated sessions below for full evidence)
+
+This document has grown across many investigation passes; this section
+is a scannable summary, not a substitute for the detailed sections below
+(each claim here links to the section that established it).
+
+**Confirmed:**
+- Every segment starts with a 24-byte header, magic `RC\x00\x00`
+  (`u32[0]==17234`); `u32[3]` is the segment's total block size
+  (walk-to-next-segment field). See "Segment Header".
+- `u32[2]` is a **per-stream constant** equal to the PDA detector's
+  monitored wavelength count (`npts`), matching the `Wavelength Table`
+  stream's own leading count exactly - not a per-segment point count.
+  See "Correction: `u32[2]`...".
+- The payload has a 100%-verified length-checked envelope in one of two
+  mutually exclusive forms ("split": `A + tail == len(payload) - 8`;
+  "symmetric": both ends equal `len(payload) - 4`), confirmed on every
+  segment of every locally available file. See "Confirmed payload
+  envelope...".
+- **Flat/real is a hard, instantaneous cliff**: body length is either
+  exactly `npts` bytes (baseline, 1 byte/value, all-zero) or jumps to at
+  least 1.8x `npts` - nothing in between, zero exceptions across ~32,000
+  segments checked, both envelope forms. No gradual escalation, no
+  early-warning signal in the segments just before the jump, and the
+  transition point itself (segment index 11 or 12, varies by file) has
+  no shared marker byte across files. See "cross-file pass" and
+  "transition-segment comparison".
+- Real-mode body length is **tightly centered near `3 * npts` bytes**
+  for the symmetric (`MTBLS432`) form - close to, but not exactly, a
+  uniform 3-bytes-per-value scheme. See "width-table retry on bimodal
+  data".
+- Width selection is very likely **driven by actual per-wavelength
+  signal magnitude**, not any of: an external per-run lookup table (no
+  config/instrument stream correlates with modal length - "external-
+  table hunt"), a fixed positional/bitmap table (least-squares fits
+  never converge to clean integer widths, even on the cleaner bimodal
+  data - "width-table retry"), or an explicit flag/marker byte
+  ("transition-segment comparison").
+- There **is** genuine, statistically-verified (randomized-control-
+  checked) temporal correlation between consecutive segments - both via
+  whole-stream compression ratio and position-aligned byte deltas
+  ("temporal/delta redundancy"), and independently reproduced via a
+  from-scratch joint-decode DP ("joint temporal+magnitude decoder") -
+  but no working decoder has been built from it yet; the joint-DP's
+  scoring function is provably not selective enough (width agreement
+  isn't monotonic with solution cost).
+
+**Ruled out** (see "This session's additional ruled-out hypotheses" and
+"further ruled-out hypotheses" for full detail): standard unsigned
+LEB128; pure PDP-endian-float array; single- and paired-escape-byte
+schemes (full 256x256 brute force); continuation-bit varints at all 8
+bit positions x both polarities x 0-11 byte header/footer skip, both
+whole-body and region-A-isolated; UTF-8-style leading-byte width
+prefixes; magnitude-threshold split (whole-body and region-A-isolated);
+leading bitmap/nibble width-selector tables (1/2/4-bit codes, both
+pooled-file and per-file least-squares); the TTFL MS RLE scheme applied
+directly; an external per-run gain/width table stored elsewhere in the
+file; `Max Plot` as an independently-decodable crib.
+
+**Genuinely open:**
+- The exact per-value token grammar (width-selection rule and numeric
+  interpretation) - the core unsolved problem.
+- The functional meaning of the "split" form's two declared-length
+  regions (`A` bytes then `tail` bytes) - confirmed to exist, never
+  explained; the "region-boundary vocabulary check" found no byte-value
+  difference between them.
+- Whether `LSS Raw Data` (the issue's literally-named path) uses the
+  *same* encoding as `PDA 3D Raw Data` at all - untested, since every
+  locally available file has it empty. See "Further avenues" at the end
+  of this document.
+- The `LC Raw Data/Chromatogram Ch5`/`Ch6` stream (real, populated, but
+  a different/simpler-looking encoding, out of this issue's named scope)
+  - not decoded, not attempted beyond the initial characterization. See
+  "LC Raw Data..." near the end of this document.
+
 ## Segment Header
 
 Chromatogram and PDA streams are divided into chunks or **segments**. Every segment begins with a **24-byte header**.
@@ -1120,3 +1195,77 @@ scope (`PDA 3D Raw Data` / `LSS Raw Data`):
   investigating `LSS Raw Data` or general LC-channel chromatogram support
   doesn't have to rediscover that the populated data lives under `LC Raw
   Data`, not `LSS Raw Data`, in files that have it.
+
+## Further avenues for a future session
+
+Beyond the single recommendation in the 2026-07-19 closing summary
+(sharpen the joint temporal+magnitude decoder's scoring function), these
+are additional, not-yet-tried directions - none executed this round, so
+treat them as leads, not findings:
+
+- **Decode the simpler, real `LC Raw Data/Chromatogram Ch5`/`Ch6`
+  stream instead of (or before) `PDA 3D Raw Data`.** It's populated,
+  structurally simpler (one giant segment per channel, not thousands of
+  small ones), and a "quiet" channel (`Ch5`) is dominated by a single
+  repeating 2-byte value - a much easier starting point than the
+  321-wavelength PDA case, and would still deliver real chromatogram
+  support even though it's outside this issue's literally-named path.
+  Nobody has run any of this document's decode hypotheses against it
+  yet.
+- **Widen the corpus search specifically for a non-empty `LSS Raw
+  Data/Chromatogram Ch*`** - the issue's literally-named target is
+  0 bytes in every locally available file. It's untested whether that's
+  universal (e.g. `LSS Raw Data` is simply unused/legacy in this
+  LabSolutions version) or just a corpus gap (e.g. only populated for
+  acquisitions that use a conventional UV/RID detector instead of, or
+  alongside, PDA). Worth a targeted fetch pass (PRIDE/MetaboLights/
+  MassIVE, searching for older instrument models or explicitly
+  UV/RID-detector method descriptions) before assuming `PDA 3D Raw
+  Data` is a valid stand-in for the named stream.
+- **Test spectral-domain (wavelength-to-wavelength) delta encoding, not
+  just temporal (segment-to-segment) delta encoding.** Everything tried
+  so far assumes each segment's `npts` tokens are independent absolute
+  values, or deltas against the *same channel in the previous segment*.
+  UV absorbance spectra are also smooth *across wavelength* within a
+  single timepoint - worth testing whether a token's value is better
+  modeled as a delta from the *previous wavelength's* decoded value in
+  the *same* segment (first-differencing within one spectrum), which is
+  a distinct hypothesis from anything in the "ruled out" list above.
+- **Try IEEE-754 half-precision (binary16) floats directly**, not just
+  the word-swapped "PDP-endian" full float32 interpretation already
+  explored. Absorbance units typically span a small range (0-3 AU),
+  which fp16 represents naturally in 2 bytes - worth checking whether a
+  mixed fp16/fp32 scheme (small values as 2-byte half floats, an escape
+  to 4-byte full float32 for outliers) fits better than the arbitrary
+  magnitude-agnostic proxy the joint-decoder pass used, and ties
+  naturally into the already-observed 2-vs-3-vs-4-byte width mix.
+- **Characterize the `CheckSum` stream (112 bytes) more fully.** The
+  external-table-hunt pass found byte offset 58 cleanly flags real-vs-
+  flat mode (`0x09` vs `0x03`) but only checked correlation against
+  modal *length* - the rest of the stream's 112 bytes were never
+  systematically characterized. If any field there is a genuine
+  checksum/CRC of the segment payload (plausible, given the stream's
+  name), brute-forcing small CRC polynomials against known segment
+  bytes would give a powerful, cheap, objective validator for candidate
+  decodes - far stronger than "does the byte count come out exact,"
+  which today's sessions repeatedly found admits multiple false
+  positives.
+- **Check whether the flat-to-real transition aligns with a fixed
+  elapsed *time* rather than a fixed segment *count*.** The transition-
+  segment pass found the index varies (11 or 12) across files with the
+  same instrument/method - worth checking the actual retention-time
+  value at the transition point (cross-referencing whatever RT stream
+  the reader already decodes elsewhere in this repo, e.g. the TTFL
+  retention-time index) instead of segment index, in case it's a fixed
+  elapsed-time firmware constant (e.g. "N seconds of lamp warm-up/
+  blanking before real acquisition starts") rather than a coincidence of
+  segment count.
+- **Use physical plausibility (peak shape) as a soft validator, not just
+  exact byte-count matching.** The joint-decoder pass's core problem was
+  a degenerate scoring function admitting many equally-cheap but
+  structurally different alignments. Plotting a candidate decode's
+  values over time per channel and checking for smooth, single-peaked
+  (roughly Gaussian-ish) elution-curve shapes - rather than only
+  checking zero-leftover exactness - could help disambiguate between
+  otherwise-tied candidate parses, the same way a human would sanity-
+  check a chromatogram by eye.
