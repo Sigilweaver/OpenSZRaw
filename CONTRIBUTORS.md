@@ -2,4 +2,5 @@
 
 Thank you to everyone who has contributed to OpenSZRaw.
 
-No external contributions yet - this list will grow as people help out.
+- [@Nabejo](https://github.com/Nabejo) - PDA/chromatogram payload
+  investigation (Sigilweaver/OpenSZRaw#2).
