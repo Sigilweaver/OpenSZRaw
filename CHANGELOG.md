@@ -19,40 +19,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - Further PDA/chromatogram payload investigation
-  (Sigilweaver/OpenSZRaw#2, contributed by @Nabejo): identified 2 of the
-  4 varying fields in `PDA 3D Raw Data/CheckSum` as exact stream byte
-  sizes (correcting an earlier "flat vs. real flag" reading); ruled out
-  a 19-polynomial CRC-16 sweep (plus Fletcher/Adler/plain-sum and an
-  Internet-checksum variant) and several plain-count/derived-size
-  candidates for the remaining 2 fields; ruled out a fixed-width fp16
-  (binary16) array and a block-floating-point/adaptive-scale hypothesis
-  family in four concrete forms, quantifying a ~48% false-positive base
-  rate for this document's own zero-leftover acceptance test along the
-  way; resolved a separate open question by finding the "split" envelope
-  form's two regions are an exact 256-wavelength-channel/remainder
-  split (also explaining why "split" vs. "symmetric" form correlates
-  with wavelength count); and showed, via a physical-plausibility check,
-  that a marker-bit signal which passed two randomized-control tests was
-  nonetheless a compensating-error artifact rather than a real decode.
-  A follow-up pass re-ran the threshold/continuation-bit sweeps with the
-  now-corrected per-region target counts, found two more dramatic-
-  looking single-file/single-region signals, and ran both all the way
-  through to actual value decoding before ruling them out too (one
-  reproduced the same compensating-error artifact under a sharper
-  threshold framing; the other exposed a real flaw in the existing
-  physical-plausibility check itself - a decode that repeats the same
-  value 80-96% of the time can look "smooth" by mean relative step
-  alone - which the check has now been revised to catch). A further
-  pass re-checked the earlier per-byte-position entropy analysis with
-  region A's now-known 256-channel boundary (reproduces the prior
-  numbers almost exactly, no new periodicity found) and re-ran the
-  joint temporal+magnitude decoder with region-correct target counts
-  and an anti-mode-collapse cost term - the underlying temporal-
-  correlation signal replicates but is markedly weaker than the
-  original single-pair anecdote suggested, and the new cost term did
-  not improve the decoder's previously-diagnosed selectivity problem.
-  The per-point payload grammar itself is still undecoded - see
-  `docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20 sessions 1-5 for
+  (Sigilweaver/OpenSZRaw#2, contributed by @Nabejo): six same-day
+  sessions of clean-room analysis. Confirmed findings: 2 of the 4
+  varying `PDA 3D Raw Data/CheckSum` fields are exact stream byte sizes
+  (correcting an earlier "flat vs. real flag" reading), and the
+  "split" envelope form's two regions are an exact
+  256-wavelength-channel/remainder split (also explaining why "split"
+  vs. "symmetric" form correlates with wavelength count). Ruled out, in
+  each case run through actual value decoding, a physical-plausibility
+  check, and randomized controls rather than reported on walk-rate
+  alone: a 19-polynomial CRC-16 sweep and several count/derived-size
+  candidates for the remaining `CheckSum` fields; a fixed-width fp16
+  array; a block-floating-point/adaptive-scale hypothesis family; a
+  region-tail marker-bit signal that passed two randomized controls but
+  traced to a compensating-error artifact; two more dramatic-looking
+  signals surfaced by re-running sweeps with corrected per-region
+  target counts; an anti-mode-collapse cost term added to the joint
+  temporal+magnitude decoder; and, from a deliberately manual (not
+  automated-sweep) byte-reading pass, a "leading byte of a 3-byte
+  token" hypothesis that traced to the same low-value-diversity metric
+  artifact on three independent files. Along the way, quantified a
+  ~48% false-positive base rate for this document's zero-leftover
+  acceptance test and fixed a real gap in the physical-plausibility
+  check itself (mode-dominated/low-diversity decodes can look
+  deceptively "smooth" under mean relative step alone). The per-point
+  payload grammar itself is still undecoded - see
+  `docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20 sessions 1-6 for
   full detail.
 
 ## [0.1.0] - 2026-07-18

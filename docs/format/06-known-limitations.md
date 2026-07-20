@@ -287,33 +287,34 @@ integer and escape-byte hypotheses (Sigilweaver/OpenSZRaw#2). This is UV
 detector / chromatogram data, not core MS spectra, so it does not block
 MS-level format parity.
 
-A 2026-07-20 session identified 2 of the 4 varying fields in the
-112-byte `PDA 3D Raw Data/CheckSum` stream as exact `u32` byte sizes of
-the `3D Raw Data` and `Max Plot` streams (not a flat/real flag as
-previously read - see the correction note and dated session in
-`docs/format/04`), and ruled out 19 standard CRC-16 polynomials plus
-several other common checksum constructions for the remaining 2 fields.
-A follow-up pass the same day resolved a separate open structural
-question - the "split" envelope form's two declared-length regions are
-an exact 256-wavelength-channel/remainder split, which also explains
-why "split" vs. "symmetric" envelope form correlates with wavelength
-count - and ruled out a block-floating-point/adaptive-scale hypothesis
-family (including one candidate that passed two randomized-control
-checks but was then shown, via a physical-plausibility check, to be a
-compensating-error artifact rather than a real decode). A further
-follow-up pass re-ran the decode sweeps with the corrected per-region
-target counts this finding implies, found two more signals that looked
-promising at first (one a sharp threshold cliff, one a 67.8%-clean
-single-file result), and ruled both out after decoding actual values -
-the second of which exposed and fixed a real gap in the
-physical-plausibility check itself (a mode-dominated, mostly-repeated
-decode can look deceptively "smooth" under a naive mean-step metric).
-A fifth pass re-checked the per-byte-position entropy analysis with
-region A's now-known 256-channel boundary (no change from the earlier
-figures, no new periodicity) and re-ran the joint temporal+magnitude
-decoder with region-correct target counts and an anti-mode-collapse
-cost term; the underlying temporal-correlation signal replicates in a
-more rigorous multi-pair test but is markedly weaker than the original
-single-pair anecdote suggested, and the new cost term did not fix the
-decoder's known selectivity problem. None of these findings decode the
-per-value payload; that grammar is still open.
+Six same-day (2026-07-20) sessions of further clean-room analysis
+narrowed the problem considerably without decoding it. Confirmed: 2 of
+the 4 varying fields in the 112-byte `PDA 3D Raw Data/CheckSum` stream
+are exact `u32` byte sizes of the `3D Raw Data` and `Max Plot` streams
+(not a flat/real flag as previously read), and the "split" envelope
+form's two declared-length regions are an exact
+256-wavelength-channel/remainder split, which also explains why
+"split" vs. "symmetric" envelope form correlates with wavelength
+count. Ruled out, each time via actual value decoding plus a
+physical-plausibility check and randomized controls rather than on
+walk-rate alone: 19 CRC-16 polynomials and several count/derived-size
+candidates for the remaining `CheckSum` fields; a fixed-width fp16
+array; a block-floating-point/adaptive-scale hypothesis family
+(including a candidate that passed two randomized-control checks but
+proved to be a compensating-error artifact); two more signals surfaced
+by re-running the decode sweeps with corrected per-region target
+counts; an anti-mode-collapse cost term added to the joint
+temporal+magnitude decoder (the underlying temporal-correlation signal
+replicates in a more rigorous multi-pair test but is markedly weaker
+than the original single-pair anecdote suggested); and, from a
+deliberately manual byte-reading pass (rather than another automated
+sweep), a "leading byte of a 3-byte token" hypothesis that traced to a
+low-value-diversity metric artifact confirmed on three independent
+files. Two genuine process improvements came out of this: a directly
+quantified ~48% false-positive base rate for this document's
+zero-leftover acceptance test, and a fix to the physical-plausibility
+check itself (mode-dominated or low-diversity decodes can look
+deceptively "smooth" under mean relative step alone). See
+`docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20 sessions 1-6 for
+full detail. None of this decodes the per-value payload; that grammar
+is still open.

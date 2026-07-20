@@ -106,6 +106,22 @@ is a scannable summary, not a substitute for the detailed sections below
   found this the hard way (a 67.8%-clean, apparently-smooth single-file
   `MTBLS432` result turned out to be up to 96% mode-dominated per
   channel) and revised the check accordingly.
+- **Methodological, extending the mode-fraction lesson: even without
+  outright mode-domination, low value diversity alone mechanically
+  produces a good smoothness score, independent of decode correctness.**
+  2026-07-20 session 6 found a `0.840` correlation (68 channels, one
+  file) between a channel's smoothness score and how many distinct
+  values it takes - genuinely variable (more analytically real)
+  channels score *worse*, and channels that barely vary score well
+  regardless of whether the decode is right. A physical-plausibility
+  check should be read skeptically for low-diversity channels
+  specifically, not just mode-dominated ones.
+- **The flat-to-real transition has no visible byte-level structure at
+  all when the transition segment's actual bytes are read by eye**
+  (2026-07-20 session 6, two files checked): no leading or trailing
+  quiet region, no length-prefix-looking field, zero bytes scattered
+  not clustered - direct, by-eye confirmation of the already-established
+  "hard, instantaneous cliff" aggregate-statistics finding.
 
 **Ruled out** (see "This session's additional ruled-out hypotheses" and
 "further ruled-out hypotheses" for full detail): standard unsigned
@@ -148,7 +164,13 @@ between solution cost and width agreement, so does not fix the
 DP's previously-diagnosed selectivity weakness (see 2026-07-20 session
 5); mod-2 and (beyond the already-explained early-channel effect)
 mod-3 periodicity in region `A`'s per-byte-position entropy (see
-2026-07-20 session 5).
+2026-07-20 session 5); the leading-byte-of-a-3-byte-token hypothesis
+for `MTBLS432`, checked via exact-`3*npts`-length segments across three
+files - the channels that looked smooth by eye in each case turned out
+to have near-zero value diversity (as low as 2 distinct values across a
+6-segment run), with a `0.49`-`0.84` smoothness-vs-diversity correlation
+confirming the pattern is a metric artifact, not a decode (see
+2026-07-20 session 6).
 
 **Genuinely open:**
 - The exact per-value token grammar (width-selection rule and numeric
@@ -2125,6 +2147,174 @@ since the original was not saved, extended with the optional
 token count so it works against an isolated region rather than only a
 combined `npts`-token body).
 
+## 2026-07-20 session 6: manual byte-level reading (no sweep, no hypothesis-first search) - a genuine new inspection method, a strong but ultimately artifact-explained "leading byte" lead, and an eye-verified confirmation of the hard-cliff transition
+
+Every session to date has been hypothesis-first: guess a scheme, sweep
+parameters, check zero-leftover, then (since session 3) check physical
+plausibility. This session deliberately inverted that order - close,
+manual, hypothesis-light reading of actual bytes, reaching for a
+parametrized test only once something specific in the raw data
+suggested one. **No new testable hypothesis survived scrutiny, and the
+per-value payload grammar remains undecoded** - but the manual read
+surfaced a genuinely new observational technique (inspecting segments
+whose body length exactly equals `3 * npts`, which requires no decode
+algorithm at all to align to a token grid) and one quantified, honest
+account of *why* a promising-looking signal from that technique
+dissolves under scrutiny, distinct from - but related to - session 4's
+mode-fraction lesson.
+
+### Byte-diffing two adjacent real-mode `MTBLS432` segments by hand
+
+Started with `..._12_65...lcd` (symmetric form, `npts=68`, no
+region-A/tail split to worry about), segments 30 and 31 (lengths 201
+and 203, a quiet/plateau part of the run away from both the transition
+and any sharp peak). A naive fixed-offset byte-by-byte diff (printed in
+8-byte rows with a running differing-byte count) reproduced the
+already-documented "80-92% of bytes differ" finding almost exactly - 7
+or 8 of every 8 bytes differ at nearly every row, which is expected
+given genuinely variable-per-value width means a fixed byte offset
+essentially never lines up with the same channel in both segments once
+any earlier channel's width has diverged.
+
+- **A closer, signed-delta-by-position read (not an aggregate percentage)
+  found something real: a cluster of small deltas at byte positions
+  that are consistently multiples of 3, and only when the byte value at
+  that position falls in the `0x40`-`0x5f` range** - the same
+  dominant-leader-byte range this document has flagged since its very
+  first PDP-endian-float observation. Of 68 real channels' worth of
+  byte positions checked by hand (0 through 202), roughly a dozen
+  positions showed `|delta| <= 4` while their neighbors showed deltas
+  in the hundreds - and every one of those small-delta positions landed
+  on a position `≡ 0 (mod 3)`, consistent with (not a new contradiction
+  of) this document's already-established `~3 * npts` centering for
+  this envelope form. Tried decoding 4-byte windows starting at these
+  positions as `float32` under all four `{LE, BE} x {plain,
+  PDP-word-swapped}` byte orderings already explored in earlier
+  sessions: none gave consistently plausible small-magnitude values
+  across even the pairs of positions checked, so a straightforward
+  "this byte starts a 4-byte float" reading does not explain the small
+  deltas on its own.
+- **A new, genuinely useful observational technique: segments whose
+  body length is exactly `3 * npts` need no decode algorithm to align
+  to a token grid at all.** If a segment's real-mode body is exactly
+  204 bytes for `npts=68`, and the true encoding really does put most
+  values at 3 bytes each, then position `channel * 3` is very likely
+  each channel's true leading byte, checkable by direct indexing with
+  no width-inference, no threshold, no walk. `..._12_65...lcd` has 70
+  such segments (out of 2662 real-mode segments), including one run of
+  **4 temporally consecutive** exact-204 segments (indices 133-136).
+  Reading the leading byte of each channel's 3-byte group across this
+  run by eye: channels 0-8 and 14 are strikingly smooth across segments
+  133, 134, and 135 (e.g. channel 4 reads `93, 93, 93` exactly; channel
+  5 reads `64, 64, 64`; channel 0 reads `71, 69, 68`, a plausible small
+  drift) - but segment 136 shows a **simultaneous jump across every
+  channel at once** (channel 4 jumps to `225`, channel 5 to `198`,
+  etc.), which reads as segment 136 not actually being a uniform
+  3-bytes-per-value body despite its total length coincidentally
+  matching `3 * npts` (consistent with this document's own
+  already-established fact that only a mix of widths, not a strict
+  per-value 3-byte rule, explains most 3-multiple lengths).
+- **Extending this check to all 70 exact-204 segments (not just the one
+  lucky run) shows the initial "smooth!" impression does not hold up,
+  and traces to a specific, quantifiable artifact.** Only 15 of the 70
+  exact-204 segments are temporally adjacent to another exact-204
+  segment (15 total adjacent pairs, mostly isolated pairs plus the one
+  run of 4) - using all 15 pairs, mean per-channel relative step
+  (session 3/4's smoothness metric) is `0.516`, and only **15 of 68
+  channels** fall under the `0.3` "plausible" threshold used elsewhere
+  in this document. Checking *which* 15: they are exactly the channels
+  at the extreme low-index (`0`-`8`) and high-index (`63`-`67`) ends of
+  the wavelength range - i.e. exactly the "low-variance early
+  wavelength" channels this document's 2026-07-19 entropy session and
+  this session's own region-A-isolated re-check (earlier in this same
+  session set) already identified as inherently low-dynamic-range, not
+  evidence of a correct decode. Quantified directly: **correlation
+  between a channel's smoothness score and its number of distinct
+  leading-byte values across the 70 exact-204 segments is `r = 0.840`**
+  - channels that are more genuinely variable (higher value diversity,
+  presumably more analytically active/real) systematically score
+  *worse* on the smoothness metric, and channels that barely vary at
+  all trivially score well. This is a distinct but closely related
+  trap to session 4's mode-fraction lesson: session 4 showed a
+  literally mode-*dominated* (one repeated value 80-96% of the time)
+  decode can look smooth; this session shows that even without hitting
+  that extreme, a channel's *low value diversity alone* - independent
+  of whether the decode is correct - mechanically produces a good
+  smoothness score. **A physical-plausibility check should be read
+  skeptically for any channel with few distinct decoded values, not
+  just ones with one dominant repeated value.**
+- **Cross-checked against the general (non-exact-204-only) walk from
+  session 4** (`threshold=1, wide_w=3`, which parses 67.8% of this
+  file's real segments): extracting only the leading byte of each wide
+  token (rather than the full 3-byte integer session 4 used) does
+  *not* fix that walk's mode-collapse problem - mean per-channel mode
+  fraction is still `0.887`, indistinguishable from session 4's
+  original finding. This confirms session 4's root cause was correctly
+  diagnosed as being about the walk's *token boundaries* themselves
+  (which segments outside the lucky exact-204 case do not reliably
+  find), not about which bytes of a correctly-bounded token get turned
+  into a value.
+
+### Hand-inspecting the flat-to-real transition segment
+
+Read the exact first-real-mode segment body (immediately following the
+last all-zero baseline segment) byte-by-byte, by eye, against the
+all-zero segment before it, for two files: `..._12_65...lcd` (first
+real segment, 200 bytes, following 11 segments of pure `0x00`) and
+`..._13_27...lcd` (first real segment, 192 bytes, the file among the 9
+confirmed real-signal `MTBLS432` files with the most zero bytes in its
+transition segment, on the theory that more zeros might mean a gentler,
+more legible onset). Also checked zero-byte counts in all 8 other
+confirmed real-signal files' first-real segments for comparison (range:
+1 to 7 zero bytes out of 192-204).
+
+- **No file shows a "mostly still zero, one or two channels just
+  starting to show signal" onset.** Every first-real segment checked is
+  immediately as densely populated with the same `0x40`-`0x5f`/leader-
+  byte-dominated content as any other real-mode segment deeper into the
+  run - reading `..._13_27...lcd`'s first-real segment byte-by-byte
+  (its 7 zero bytes, the most of any file checked, are scattered at
+  positions `0, 49, 54, 80, 81, 100, 167` - not clustered at the start
+  or in any other single contiguous run) shows no leading quiet region,
+  no trailing quiet region, and nothing that reads as a length-prefix
+  or marker field distinct from the rest of the body.
+- This is a genuine, eye-verified **confirmation**, not a new finding
+  by itself: the 2026-07-19 transition-segment-comparison session
+  already established via aggregate statistics that the flat-to-real
+  switch is an instantaneous cliff with "zero nonzero bytes" in the
+  segments immediately before it and no shared marker at the transition
+  segment itself. This session read the *actual bytes* of the
+  transition segment directly (not just its length or a checksum) for
+  the first time, across two files, and found the same thing a human
+  reading the raw hex would conclude: there is no visible structural
+  seam at the transition, only genuinely dense, high-entropy real data
+  starting immediately in every channel at once.
+
+**Verdict**: this session's inverted, manual-first approach found one
+real, reusable technique (exact-`3*npts`-length segments as an
+algorithm-free way to inspect a token grid) and used it honestly enough
+to catch its own initially-promising result as an artifact, rather than
+reporting the encouraging-looking first four-segment run as a hit. The
+transition-segment read adds direct, by-eye confirmation to an
+already-well-supported fact rather than contradicting or extending it.
+Neither line of inquiry produced a specific byte pattern, marker, or
+periodicity that suggests a new parametrized hypothesis worth building
+and sweeping. Per this round's own instructions, this is being recorded
+as a legitimate close to this manual-inspection lead for now rather than
+forced further: the payload's per-value grammar remains undecoded after
+six same-day sessions of systematic and, this round, manual
+investigation, and this document's own historical pattern (this
+session's finding included) is that promising-looking signals at this
+scale of investigation keep resolving to already-known artifacts
+(edge-channel low variance, value-diversity-driven metric bias,
+compensating token-boundary errors) rather than to the real grammar.
+
+Scripts: ad hoc, run via disposable Python files under this session's
+own scratch directory (outside the repo, not saved to
+`re/src/analysis/`), reusing `common.py`'s `iter_segments`/`body_of`;
+no new reusable helper modules were warranted for a manual-reading
+session.
+
 ## LC Raw Data - a different, unrelated chromatogram stream
 
 While looking for real `LSS Raw Data` chromatogram content (all empty in
@@ -2162,9 +2352,16 @@ joint temporal+magnitude decoder's scoring function) was attempted in
 anti-mode-collapse penalty term tried - see that session for detail and
 for three concretely scoped follow-ups it left open (a faster/non-Python
 DP implementation, a run-length-based rather than single-pair-based
-anti-collapse penalty, and fully manual byte inspection). The items
-below are additional, not-yet-tried directions - none executed this
-round, so treat them as leads, not findings:
+anti-collapse penalty, and fully manual byte inspection). The third of
+those was attempted in session 6 - general manual byte-level reading
+(not targeted at region `tail` specifically) of `MTBLS432` real-mode
+segments and the flat-to-real transition segment, with no new testable
+hypothesis surfacing, though one reusable inspection technique
+(exact-`3*npts`-length segments as an algorithm-free token-grid anchor)
+came out of it. The region-`tail`-specific manual read described in the
+next bullet remains untried. The items below are additional,
+not-yet-tried directions - none executed this round, so treat them as
+leads, not findings:
 
 - **(New, from 2026-07-20 session 3; followed up in session 4 with a
   negative result) Push the region-`tail` walk past channel index 2.**
@@ -2189,6 +2386,29 @@ round, so treat them as leads, not findings:
   shortcut around it, but the much smaller channel count (63-69 instead
   of 256-327) may still make manual inspection more tractable than it
   is against a full segment.
+- **(New, from 2026-07-20 session 6) Re-run the exact-`3*npts`-length
+  byte-diff technique against longer exact-`3*npts` runs: tried this
+  session, same artifact confirmed on two more files, this specific
+  avenue is now closed too.** Session 6's manual read of
+  `..._12_65...lcd`'s exact-204-byte segments found a handful of
+  channels that looked smooth, but all of them turned out to be the
+  same already-known low-variance edge channels (indices `0`-`8` and
+  `63`-`67`), with a `0.840` smoothness-vs-value-diversity correlation
+  across that file's 4-segment run. To check this wasn't an artifact of
+  that one short run, this session went on to find and check the two
+  longest same-length consecutive runs across all 9 confirmed
+  real-signal `MTBLS432` files: `..._26_68...lcd` (6 consecutive
+  exact-204-byte segments, indices `2036`-`2041`) and `..._10_26...lcd`
+  (another 6-long run, indices `1293`-`1298`). Both reproduce the same
+  pattern - `..._26_68...lcd`'s apparently-smooth *interior* channels
+  (e.g. channels 9-11, values like `[84, 83, 84, 83, 84, 84]`) turned
+  out to have only **2 distinct values** across the 6-segment run, and
+  the smoothness-vs-diversity correlation is `0.718` (`..._26_68`) and
+  `0.489` (`..._10_26`) - both substantial, both in the same
+  artifact-confirming direction as the original file. This rules out
+  "the 4-segment run was just too short to see real interior-channel
+  structure" as an explanation; longer runs on two independent files
+  show the identical low-diversity artifact, not new signal.
 - **Decode the simpler, real `LC Raw Data/Chromatogram Ch5`/`Ch6`
   stream instead of (or before) `PDA 3D Raw Data`.** It's populated,
   structurally simpler (one giant segment per channel, not thousands of
