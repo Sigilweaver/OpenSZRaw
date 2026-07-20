@@ -83,7 +83,21 @@ is a scannable summary, not a substitute for the detailed sections below
   from-scratch joint-decode DP ("joint temporal+magnitude decoder") -
   but no working decoder has been built from it yet; the joint-DP's
   scoring function is provably not selective enough (width agreement
-  isn't monotonic with solution cost).
+  isn't monotonic with solution cost). **Caveat added 2026-07-20 session
+  5**: the joint-DP finding's effect size was originally based on a
+  single true-pair-vs-random-pair anecdote (`1.8x` cost ratio); a
+  20-pair re-test on region `tail` reproduces the *direction* but at a
+  much smaller, less certain effect size (`~1.13x` mean ratio, true
+  pair cheaper in only 12/20 individual pairs) - cite this as a weak,
+  aggregate-level signal, not a strong or reliable pair-by-pair one.
+- **The region-A-isolated per-byte-position entropy analysis (2026-07-20
+  session 5) reproduces the earlier whole-stream entropy session's
+  numbers almost exactly** (marginal/conditional entropy within 0.01
+  bits) and finds no periodic marker at either 2- or 3-byte spacing
+  across region `A`'s full true 256-channel span - confirming the
+  earlier entropy work was already correctly scoped and the
+  low-entropy-near-`0x40`-at-residue-1 pattern really is a low-variance
+  early-wavelength artifact, not a token-boundary marker.
 - **Methodological: a physical-plausibility (temporal-smoothness) check
   must also test each channel's mode fraction, not just mean
   relative step.** A decode that is a frozen, repeated value most of
@@ -126,7 +140,15 @@ channel-0/1 artifact under a different rule, and a fresh `MTBLS432`
 sweep's single-file 67.8%-clean/"66-of-68-channels-smooth" result
 failed cross-file generalization and was shown to be a smoothness-
 metric artifact (mode-dominated decoded values, not real drift) rather
-than a genuine decode (see 2026-07-20 session 4).
+than a genuine decode (see 2026-07-20 session 4); a fixed
+bit-identical-value penalty term added to the joint temporal+magnitude
+DP's cost function, intended to discourage mode-collapsed solutions -
+did not improve (and on a 20-pair sample, worsened) the correlation
+between solution cost and width agreement, so does not fix the
+DP's previously-diagnosed selectivity weakness (see 2026-07-20 session
+5); mod-2 and (beyond the already-explained early-channel effect)
+mod-3 periodicity in region `A`'s per-byte-position entropy (see
+2026-07-20 session 5).
 
 **Genuinely open:**
 - The exact per-value token grammar (width-selection rule and numeric
@@ -1907,6 +1929,202 @@ threshold and continuation-bit walkers/sweepers parameterized by target
 token count and optional header skip, reusable against any region) and
 `decode_threshold.py` on top of session 3's `regions.py` helper.
 
+## 2026-07-20 session 5: region-A-isolated entropy re-check (reproduces, doesn't extend, the earlier finding); a corrected-target joint DP with an anti-mode-collapse penalty term, tested more rigorously than the original single-pair anecdote
+
+Two follow-ups, both aimed at leads that fall directly out of the
+256-channel region boundary (session 3) and the mode-fraction lesson
+(session 4). **Neither produced a working decode.** Both are honest,
+fully-executed negative results with genuine new information in them
+(a reproduced-not-contradicted entropy characterization, and a more
+rigorous re-test of a claim this document had previously only supported
+with a single-pair anecdote), not abandoned attempts.
+
+### Region-A-isolated entropy analysis: reproduces the earlier whole-stream numbers almost exactly, confirms no periodic marker
+
+The 2026-07-19 per-byte-position entropy session ran before the
+256-channel region boundary was known, but - important scoping fact
+worth stating precisely - that session's "region A" and "region tail"
+labels were *already* byte-accurate: the `A`/`tail` byte ranges come
+from the envelope's own length-prefix fields (confirmed since session
+1), which session 3 never touched. What session 3 corrected was the
+*target token count* used by the threshold/varint decode sweeps, not
+which bytes belong to region `A`. So re-running the entropy analysis
+with the "correct" region boundary was a real thing to check (the
+earlier session's byte extraction could in principle still have been
+subtly wrong), but was not guaranteed to change anything - and it
+didn't:
+
+- **Marginal and conditional entropy reproduce the 2026-07-19 figures
+  to three decimal places.** Region `A`: `H(byte) = 6.281` bits,
+  `H(next|current) = 5.409` bits (13.9% reduction) - versus the
+  earlier session's `6.279` / `5.408` (13.8%). Region `tail`: `H(byte)
+  = 5.793`, `H(next|current) = 4.696` (18.9% reduction) - versus the
+  earlier session's `5.783` / `4.697` (18.8%). Region `A`'s
+  individual-vs-concatenated compression ratio (`93.3%` vs `77.9%`)
+  also matches the earlier session's numbers closely. This is a
+  genuine confirmation, not a redundant no-op: it directly verifies the
+  entropy session's region extraction was already correct, so no
+  periodicity or marker was being smeared out or hidden by a region
+  misalignment that has now been fixed - the entropy characterization
+  itself needed no correction.
+- **New check: region `tail` conditional entropy with the two known
+  edge channels (position 0 and 1, identified in session 3) excluded**,
+  to see whether they were inflating the "genuine structure" finding.
+  Channels 2 onward: `H(byte) = 5.753`, `H(next|current) = 4.726`
+  (17.9% reduction) - only marginally lower than the full-region figure
+  (18.9%). The edge channels contribute a small amount to the
+  conditional-entropy reduction (unsurprising, since channel 1 being a
+  hard-wired constant given channel 0 is trivially predictable) but
+  most of the "genuine local structure, not noise" finding survives
+  their removal - real structure exists in the still-undecoded
+  channels 2+ too, consistent with session 4's finding that those
+  channels are not simply noise-passing-as-signal, just not yet
+  decoded.
+- **No new periodicity found at region `A`'s true 256-channel scale.**
+  Checked mod-3 (the residue class the original entropy session flagged
+  and then explained away as a low-variance-early-channel artifact, not
+  a token marker) across the *entire* region `A` span (not just the
+  first 40 bytes): the low-entropy-at-residue-1 pattern is strong only
+  for roughly the first 60 bytes (entropy `2.1`-`3.7` bits, one byte
+  value `0x40` accounting for up to 75% of occurrences) and fades to a
+  flat `~5.3`-`5.7` bits at all three residues by position `~120` and
+  beyond - reproducing, not contradicting, the earlier session's
+  "low-variance early wavelengths, not a 3-byte-token marker"
+  conclusion, now checked against the true 420-536-byte region `A` span
+  rather than an approximate one. Also checked mod-2 (motivated by
+  region `A`'s own average width, `1.89`-`1.91` bytes/channel, being
+  closer to 2 than 3): no distinction between residues at any position
+  range checked (`[0,40)`, `[40,120)`, `[120,250)`, `[250,420)`) - both
+  residues track each other closely everywhere, ruling out a period-2
+  marker just as cleanly as period-3 was already ruled out.
+
+**Verdict**: this was a legitimate check to run (the region boundary
+*could* have changed the entropy picture), but it didn't - the earlier
+session's entropy characterization holds up exactly, and no
+periodicity at either of the two most plausible token widths (2 or 3
+bytes, matching region `A`'s and region `tail`'s own observed average
+widths) was found anywhere in region `A`'s true span. If a marker byte
+exists, it is not visible as a fixed-position, fixed-periodicity
+entropy dip - consistent with (not a new contradiction of) the
+transition-segment-comparison session's earlier "no marker byte found"
+conclusion for a different part of this problem.
+
+### Joint temporal+magnitude DP, re-scoped to region-correct target counts, with an anti-mode-collapse cost term
+
+The 2026-07-19 joint-DP session built and ran its dynamic program
+before the 256-channel boundary was known, walking the *combined*
+`A`+`tail` body as one `npts`-token problem. Rebuilt the DP from
+scratch this session (the original implementation was not saved,
+consistent with that session's own "ad hoc, not saved" note) with two
+corrections: region `A` and region `tail` scored as independent
+sub-problems with their own correct target counts (`256` and `npts -
+256` respectively), and an optional cost term that adds a fixed penalty
+whenever the two segments' decoded values for a channel come out
+*bit-identical*, directly targeting the mode-collapse/frozen-channel
+failure mode session 4 diagnosed (a real decode should show continuous
+drift, not exact repeats).
+
+- **Region `tail` (small enough to run at scale - `nT=65`, ~2-3
+  seconds/pair): the true-vs-random-pair effect reproduces in
+  aggregate, but is markedly weaker and less certain than the original
+  session's single-pair anecdote implied.** The 2026-07-19 session's
+  entire evidentiary basis for "true neighbors are more self-consistent
+  than random pairs" was **one** true pair versus **one** random pair
+  (segment 4-vs-5, cost `2.3789`, versus segment 4-vs-1000, cost
+  `4.3407`, a `1.8x` difference). This session re-ran the comparison
+  across **20 true-neighbor pairs and 20 matched random-pair controls**
+  (same anchor segment, a random partner at least 50 segments away),
+  with `exact_match_penalty=0` (i.e. the original, unmodified cost
+  function, applied for the first time to region `tail` alone at its
+  correct target count). The aggregate direction replicates - mean
+  cost/channel `0.0113` (true) vs `0.0128` (random), true lower as
+  expected - but the *effect size* is much smaller than the original
+  `1.8x` anecdote (`~1.13x` here), and a **per-pair sign test shows
+  true-neighbor cost was lower in only 12 of 20 pairs (60%)** - not
+  distinguishable from chance at this sample size. This is a real,
+  useful correction to how confidently this document should state the
+  original finding: the *direction* of the temporal-correlation claim
+  holds up under a more rigorous multi-pair re-test, but the
+  *magnitude* the original single anecdote suggested was likely
+  optimistic, and a future session citing this finding should say
+  "weak, aggregate-level signal, not reliable pair-by-pair" rather than
+  repeating the original `1.8x` figure as if it were typical.
+- **The anti-mode-collapse penalty term did not improve, and on this
+  sample appeared to worsen, the DP's selectivity - a negative result
+  for the specific fix tried, not a validation of it.** The original
+  session's diagnosed weakness was that width agreement does not track
+  solution cost monotonically. As a proxy for "does the objective
+  reward genuinely-correct-looking solutions," computed the correlation
+  between per-pair cost/channel and per-pair width agreement across the
+  same 20 true-neighbor pairs: with no penalty (`exact_match_penalty =
+  0`), correlation is `-0.135` (weakly in the hoped-for direction -
+  lower cost mildly associated with higher agreement); with the
+  penalty active (`exact_match_penalty = 1.0`), correlation flips to
+  `+0.338` (moderately in the *wrong* direction - lower cost associated
+  with *lower* agreement). This is the opposite of what the penalty
+  term was designed to achieve. It is a small sample (20 pairs, one
+  file, one penalty value) and should not be read as definitively
+  ruling out every possible anti-repeat cost term, but the specific,
+  concretely-implemented version tried this session - a fixed penalty
+  for bit-identical decoded values between two segments - does not fix
+  the selectivity problem and should not be assumed to without
+  evidence. **This route, as implemented, is closed.**
+- **Region `A` (target=256): computationally intractable for the exact
+  DP as implemented, confirming and sharpening the original session's
+  own noted limitation.** The original whole-body DP already reported
+  needing 100-120 seconds per pair at `npts=321` on the combined
+  `A`+`tail` body. Region `A` alone, at its corrected target of 256
+  channels, is worse: a single true-neighbor pair (body lengths 441 and
+  443 bytes) did not converge within a 3,000,000-state budget in 50
+  seconds of search - state space growth outpaced the feasibility
+  pruning that kept the original whole-body DP tractable (peaking at
+  "only" 59,220 states there). This is plausibly because region `A`'s
+  own average width (`~1.7`-`1.9` bytes/channel, closer to a boundary
+  between width-1 and width-2 tokens) leaves the width-1-vs-2 choice
+  ambiguous at many more positions than the combined-body case did,
+  which is exactly the kind of denser branching that defeats this
+  pruning strategy. Not pursued further at larger state budgets this
+  session, given the already-substantial time cost for a single pair
+  with no sign of convergence; a genuinely faster (vectorized, or
+  non-Python) implementation - which the original session's own
+  recommendation already anticipated needing for a longer chain - would
+  need to come first before region `A` specifically is tractable for
+  this method at all.
+
+**Verdict**: both corrections from this session's two leads were
+implemented and tested honestly, neither produced a working decode, and
+the more rigorous multi-pair re-test of the original DP's headline
+claim found the underlying temporal-correlation signal real but weaker
+than previously documented - a useful correction for any future session
+citing that finding, even though it doesn't change this document's
+overall undecoded status.
+
+**What's left, in the requester's own words, if a future session wants
+to keep going here**: (1) a faster (non-Python, e.g. Rust or a
+vectorized numpy formulation) joint-DP implementation, to make region
+`A`'s larger state space and a longer multi-segment chain (beyond
+pairs) actually tractable - both were already recommended by the
+2026-07-19 session and remain the single most concrete unblocked next
+step; (2) a different, non-fixed-penalty formulation of the
+anti-mode-collapse idea (e.g. penalizing a *run* of 3+ consecutive
+identical values specifically, rather than any single bit-identical
+pair, since real adjacent samples of a slowly-varying signal can
+legitimately coincide occasionally) - this session tested only the
+simplest version and found it unhelpful, not every version; (3) fully
+manual, by-hand byte inspection of a handful of segments (not a
+parameterized sweep or DP), which no session including this one has
+actually done - every attempt to date has been an automated search over
+some hypothesis family, and the corpus of things automated search
+finds unpromising is now large enough that manual inspection may turn
+up structure a parameterized search wasn't shaped to find.
+
+Scripts: `regions.py` (session 3, reused), `joint_dp.py` (new this
+session - a from-scratch reimplementation of the 2026-07-19 joint DP,
+since the original was not saved, extended with the optional
+`exact_match_penalty` term and generalized to take an arbitrary target
+token count so it works against an isolated region rather than only a
+combined `npts`-token body).
+
 ## LC Raw Data - a different, unrelated chromatogram stream
 
 While looking for real `LSS Raw Data` chromatogram content (all empty in
@@ -1938,10 +2156,15 @@ scope (`PDA 3D Raw Data` / `LSS Raw Data`):
 
 ## Further avenues for a future session
 
-Beyond the single recommendation in the 2026-07-19 closing summary
-(sharpen the joint temporal+magnitude decoder's scoring function), these
-are additional, not-yet-tried directions - none executed this round, so
-treat them as leads, not findings:
+The 2026-07-19 closing summary's single recommendation (sharpen the
+joint temporal+magnitude decoder's scoring function) was attempted in
+2026-07-20 session 5, with a negative result for the specific
+anti-mode-collapse penalty term tried - see that session for detail and
+for three concretely scoped follow-ups it left open (a faster/non-Python
+DP implementation, a run-length-based rather than single-pair-based
+anti-collapse penalty, and fully manual byte inspection). The items
+below are additional, not-yet-tried directions - none executed this
+round, so treat them as leads, not findings:
 
 - **(New, from 2026-07-20 session 3; followed up in session 4 with a
   negative result) Push the region-`tail` walk past channel index 2.**

@@ -308,5 +308,12 @@ single-file result), and ruled both out after decoding actual values -
 the second of which exposed and fixed a real gap in the
 physical-plausibility check itself (a mode-dominated, mostly-repeated
 decode can look deceptively "smooth" under a naive mean-step metric).
-None of these findings decode the per-value payload; that grammar is
-still open.
+A fifth pass re-checked the per-byte-position entropy analysis with
+region A's now-known 256-channel boundary (no change from the earlier
+figures, no new periodicity) and re-ran the joint temporal+magnitude
+decoder with region-correct target counts and an anti-mode-collapse
+cost term; the underlying temporal-correlation signal replicates in a
+more rigorous multi-pair test but is markedly weaker than the original
+single-pair anecdote suggested, and the new cost term did not fix the
+decoder's known selectivity problem. None of these findings decode the
+per-value payload; that grammar is still open.

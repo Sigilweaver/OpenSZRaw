@@ -42,9 +42,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   threshold framing; the other exposed a real flaw in the existing
   physical-plausibility check itself - a decode that repeats the same
   value 80-96% of the time can look "smooth" by mean relative step
-  alone - which the check has now been revised to catch). The per-point
-  payload grammar itself is still undecoded - see
-  `docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20 sessions 1-4 for
+  alone - which the check has now been revised to catch). A further
+  pass re-checked the earlier per-byte-position entropy analysis with
+  region A's now-known 256-channel boundary (reproduces the prior
+  numbers almost exactly, no new periodicity found) and re-ran the
+  joint temporal+magnitude decoder with region-correct target counts
+  and an anti-mode-collapse cost term - the underlying temporal-
+  correlation signal replicates but is markedly weaker than the
+  original single-pair anecdote suggested, and the new cost term did
+  not improve the decoder's previously-diagnosed selectivity problem.
+  The per-point payload grammar itself is still undecoded - see
+  `docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20 sessions 1-5 for
   full detail.
 
 ## [0.1.0] - 2026-07-18
