@@ -26,13 +26,25 @@ The raw mass spectrometry data is stored in different root-level directories bas
    - Root directory: `QTFL RawData/`
    - Key streams: `Centroid Data`, `Centroid Index`, `Centroid BPC`, `Centroid SumTIC`, `Retention Time`.
 
-4. **PDA / UV Detectors**
+4. **QQQ (triple quadrupole) LC-MS (e.g., MTBLS12691, MTBLS2376, MTBLS7425) - not decoded, see docs/format/06 section 7**
+   - Root directory: `TLM Raw Data/`
+   - Key streams: `MS Raw Data`, `Spectrum Index`, `Retention Time` (naming closer to `GCMS Raw Data` than to either TOF-based variant - plausible shared quadrupole-architecture lineage with GC-MS, not confirmed).
+
+5. **Single-quadrupole LC-MS (e.g., MTBLS1960) - DISCOVERY only, see docs/format/07, not yet decoded or detected by the reader**
+   - Root directory: `Mass Raw Data/`
+   - Key streams: `MS Raw Data`, `Spectrum Index`, `Retention Time`, `TIC Data`, `Scan Group Index`, `Status`.
+
+6. **PDA / UV Detectors**
    - Root directory: `PDA 3D Raw Data/`
    - Key streams: `3D Raw Data`, `Wavelength Table`, `Status`.
 
+`crates/openszraw::raw::detect_variant` currently only recognizes
+variants 2, 3, and (misdetected as 3, see docs/format/06 section 7)
+4 above. Variant 5 has no detection path at all yet.
+
 ## Metadata Streams
 
-The `File Property` stream is universally present across all instrument families and is encoded as UTF-8 XML data (with a 4-byte size prefix). Other metadata such as `2D Data Item` and `2D Data Item U` (UTF-16LE) also contain GUD-formatted XML.
+The `File Property` stream is universally present across all instrument families and is encoded as UTF-8 XML data (with a 4-byte size prefix). Other metadata such as `2D Data Item` and `2D Data Item U` (UTF-16LE) also contain GUD-formatted XML. See `docs/format/08-metadata-and-processing-streams.md` for a full corpus-wide map of these and the many other metadata/post-processing storages every file carries (method/instrument config, compound-identification results, audit trail, report templates) - none of which are read by the reader today.
 
 This confirms the clean-room finding that no embedded SQLite databases are used; all data is stored directly in binary OLE2 streams.
 

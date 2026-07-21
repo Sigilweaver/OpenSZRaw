@@ -376,3 +376,34 @@ or flag it as unresolved"). Fetching a real, varying `Ch5`-equivalent
 channel from a different accession (see
 `docs/format/04`'s "Further avenues" section) is the concrete next step
 that could resolve it.
+
+## 12. Single-quadrupole (`.lcd` `Mass Raw Data`): a fifth on-disk variant, not detected or decoded at all
+
+Found while exploring metadata/processing streams after #20's corpus
+widening added the first single-quadrupole sample (`MTBLS1960`,
+Shimadzu LCMS-2020). Unlike every gap above, this isn't a decode gap in
+something the reader recognizes - `detect_variant` has no case for this
+variant's root storage (`Mass Raw Data`) at all, so these files fail to
+open with a generic, honest-but-uninformative error (`neither 'TTFL Raw
+Data' nor 'QTFL RawData' storage found`) rather than a message that
+names what they actually are. See `docs/format/07-mass-raw-data-single-quad.md`
+for the full storage-tree writeup and initial byte-shape reconnaissance
+(parallel `Retention Time`/`Spectrum Index` arrays, TIC data, a
+substantial `MS Raw Data` payload) - promising but not decoded.
+Corpus caveat: only one accession represents this variant so far.
+
+## 13. Metadata and post-processing streams: an entire undocumented storage tree, not read anywhere
+
+Every `.lcd` file carries dozens of top-level storages beyond raw
+spectra and chromatogram/PDA data - instrument method/config
+(`GUMM_Information`), post-acquisition compound-ID/quantitation results
+(`Mass Data Processing`, confirmed to hold real per-run results via
+embedded compound-name strings matching a study's actual biology), LC
+detector processing parameters (`LSS Data Processing` and siblings),
+report templates, and audit/system-check metadata. None of it is read
+by `crates/openszraw` today. See
+`docs/format/08-metadata-and-processing-streams.md` for the full
+corpus-wide map and a prioritized list of what's worth decoding first -
+`File Property`/`Method File Property` (plain XML, already decodable)
+is the one piece of this list that's a small, contained win rather than
+open-ended reverse engineering.
