@@ -18,6 +18,12 @@
 //! top-level CFBF storage is present, never by filename. `PDA 3D Raw Data`
 //! (secondary UV detector) is out of scope for this crate, see
 //! `docs/format/04-lcd-chromatogram-pda.md`.
+//!
+//! A separate, unrelated stream - `LC Raw Data/Chromatogram ChN`
+//! (conventional UV/RID-style LC detector channels) - *is* decoded and
+//! exposed via [`openmassspec_core::SpectrumSource::iter_chromatograms`],
+//! see `raw::lc_chrom` and `docs/format/04-lcd-chromatogram-pda.md`'s
+//! "LC Raw Data Chromatogram Ch5/Ch6 decode" section.
 
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
 

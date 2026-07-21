@@ -327,3 +327,52 @@ both a random-byte and a shuffled-byte control. See
 `docs/format/04-lcd-chromatogram-pda.md`'s 2026-07-20 sessions 1-7 for
 full detail. None of this decodes the per-value payload; that grammar
 is still open.
+
+## 11. LC Raw Data/Chromatogram Ch5/Ch6: `Ch6` decoded and wired in; `Ch5`'s numeric grammar is confirmed untestable from this corpus (PARTIALLY RESOLVES Sigilweaver/OpenSZRaw#21)
+
+A separate, unrelated stream from section 10 above, despite sharing the
+same outer 24-byte `RC\x00\x00` segment header - see
+`docs/format/04-lcd-chromatogram-pda.md`'s "2026-07-21 session (LC Raw
+Data Chromatogram Ch5/Ch6 decode)" for the full derivation. Two things
+worth stating precisely, since they carry different confidence levels:
+
+- **Byte-exact, zero-exception-verified (all 5 `PXD020792` corpus
+  files):** the segment body is internally divided into `u16`
+  length-prefixed/suffixed "pages" (the sub-segment structure
+  `docs/format/04` previously flagged as not yet characterized), and a
+  `(threshold=0x20, wide_width=2)` literal/wide-token tokenization rule
+  decodes every page of every file's `Ch5` and `Ch6` stream to exactly
+  its declared point count with zero leftover bytes. This part is not in
+  question.
+- **Strongly evidenced but not byte-exact-certain:** the specific
+  numeric interpretation of a wide token (which byte holds the high
+  bits, how many bits, sign convention) is corroborated by a
+  physical-plausibility argument - cumulative-summing the decoded deltas
+  produces a smooth, single-ramp-then-plateau chromatogram in all 5
+  files, at roughly 12x lower mean per-sample delta magnitude than any
+  alternative bit layout tried - rather than a second independent
+  byte-exact proof the way the tokenization split itself has.
+
+`crates/openszraw::raw::lc_chrom` implements the confirmed framing plus
+the best-evidenced numeric interpretation, wired into `Reader`'s
+`SpectrumSource::iter_chromatograms`. It deliberately does **not** emit a
+chromatogram for `Ch5`: every one of `Ch5`'s 7200 samples, in every one
+of the 5 locally available files, decodes to the exact same wide token
+(raw value 512), which makes the delta-vs-absolute-value question
+genuinely unanswerable from this corpus (a constant delta would integrate
+into an unbounded ramp, contradicting `Ch5`'s documented flat/quiet
+character - so either the wide-token formula is specifically wrong for
+`Ch5`'s value, or `Ch5`'s repeated byte pair is a sentinel rather than a
+generic magnitude token). `decode_stream` skips any channel whose decoded
+tokens show fewer than 2 distinct values rather than guess, which also
+means a future file whose `Ch5` genuinely varies would decode normally
+without any code change.
+
+This is intentionally left as a documented open question rather than
+resolved by assumption, per `CONTRIBUTING.md`'s clean-room policy
+("if you can only explain a field by having watched what LabSolutions
+shows for it, don't write that down - keep digging in the bytes instead,
+or flag it as unresolved"). Fetching a real, varying `Ch5`-equivalent
+channel from a different accession (see
+`docs/format/04`'s "Further avenues" section) is the concrete next step
+that could resolve it.

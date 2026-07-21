@@ -1,5 +1,6 @@
 //! Low-level parsing modules for `.qgd` and `.lcd` files.
 
+pub mod lc_chrom;
 pub mod qgd;
 pub mod qtfl;
 pub mod timestamp;

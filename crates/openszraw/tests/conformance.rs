@@ -24,6 +24,13 @@ fn ttfl_fixture() -> PathBuf {
     PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD020792/UY02-01-01p400.LCD")
 }
 
+/// Same file as `ttfl_fixture`; `PXD020792` is also where
+/// `LC Raw Data/Chromatogram Ch5`/`Ch6` were found populated (see
+/// `docs/format/04-lcd-chromatogram-pda.md`, Sigilweaver/OpenSZRaw#21).
+fn ttfl_lc_chromatogram_fixture() -> PathBuf {
+    ttfl_fixture()
+}
+
 /// Regression fixture for the `Data Index` `entry_i`/trailing-partial-
 /// block bug fixed this session - see the addendum in
 /// `docs/format/03-lcd-ttfl-msdata.md` and
@@ -272,5 +279,65 @@ fn ttfl_base_peak_mz_is_plausible_for_most_scans() {
         fraction * 100.0,
         plausible,
         base_peaks.len()
+    );
+}
+
+/// See `raw::lc_chrom` and docs/format/04's "LC Raw Data Chromatogram
+/// Ch5/Ch6 decode" session (Sigilweaver/OpenSZRaw#21). Only `Ch6` is
+/// expected to decode - `Ch5` is deliberately skipped (single repeated
+/// value in every corpus file, grammar untestable, see
+/// `lc_chrom::decode_stream`'s doc comment).
+#[test]
+fn ttfl_lc_chromatogram_ch6_decodes_and_is_plausible() {
+    let Some(mut reader) = open_or_skip(&ttfl_lc_chromatogram_fixture()) else {
+        return;
+    };
+    let chroms: Vec<_> = reader.iter_chromatograms().collect();
+    assert_eq!(
+        chroms.len(),
+        1,
+        "expected exactly one decoded LC chromatogram (Ch6); Ch5 must be skipped"
+    );
+    let ch6 = &chroms[0];
+    assert!(ch6.id.ends_with("Ch6"), "unexpected id: {}", ch6.id);
+    assert_eq!(ch6.intensity.len(), 7200);
+    assert_eq!(ch6.time_sec.len(), 7200);
+
+    // Retention time must be non-decreasing and evenly spaced at the
+    // corpus-derived 0.5s sample interval.
+    for w in ch6.time_sec.windows(2) {
+        assert!(
+            (w[1] - w[0] - 0.5).abs() < 1e-3,
+            "sample interval not ~0.5s: {} -> {}",
+            w[0],
+            w[1]
+        );
+    }
+
+    // Physical plausibility (docs/format/04's "Further avenues" section
+    // explicitly endorses this as a soft validator): intensities should
+    // be non-negative and stay within the corpus's observed dynamic
+    // range, not blow up into an unbounded ramp.
+    for &v in &ch6.intensity {
+        assert!(v.is_finite(), "non-finite intensity {v}");
+        assert!(
+            (0.0..20_000.0).contains(&v),
+            "implausible LC Ch6 intensity {v}"
+        );
+    }
+}
+
+/// Confirms `Ch5` (constant across every corpus file) is not emitted as a
+/// fabricated chromatogram trace - see `lc_chrom::decode_stream`'s doc
+/// comment for why guessing its numeric grammar would be dishonest.
+#[test]
+fn ttfl_lc_chromatogram_ch5_is_not_emitted() {
+    let Some(mut reader) = open_or_skip(&ttfl_lc_chromatogram_fixture()) else {
+        return;
+    };
+    let chroms: Vec<_> = reader.iter_chromatograms().collect();
+    assert!(
+        chroms.iter().all(|c| !c.id.ends_with("Ch5")),
+        "Ch5 should not be emitted (single repeated value, grammar untestable)"
     );
 }

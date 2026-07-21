@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `\x05SummaryInformation` stream (which `.lcd`/`.qgd` don't carry -
   see `docs/format/06-known-limitations.md` #9). Resolves
   Sigilweaver/OpenSZRaw#9.
+- `LC Raw Data/Chromatogram Ch6` (a conventional UV/RID-style LC detector
+  channel, distinct from the still-undecoded `PDA 3D Raw Data`) is now
+  decoded and exposed via `SpectrumSource::iter_chromatograms`, tagged
+  with PSI-MS `MS:1000811` "electromagnetic radiation chromatogram" - see
+  `docs/format/04-lcd-chromatogram-pda.md` and
+  `docs/format/06-known-limitations.md` #11. `Ch5` shares the same
+  verified page/tokenization framing but is deliberately left undecoded:
+  every sample in every locally available file is the same single
+  repeated value, which makes its numeric grammar (delta vs. absolute
+  convention) untestable from this corpus rather than resolved. Partially
+  resolves Sigilweaver/OpenSZRaw#21.
+
+  Contributed by @Nabejo.
 
 ### Documentation
 

@@ -10,10 +10,11 @@ use std::path::Path;
 use byteorder::{ByteOrder, LittleEndian};
 use cfb::CompoundFile;
 use openmassspec_core::{
-    Analyzer, CvTerm, PrecursorInfo, RunMetadata, ScanMode, SpectrumRecord, SpectrumSource,
+    Analyzer, ChromatogramRecord, CvTerm, PrecursorInfo, RunMetadata, ScanMode, SpectrumRecord,
+    SpectrumSource,
 };
 
-use crate::raw::{self, qgd, qtfl, ttfl, Variant};
+use crate::raw::{self, lc_chrom, qgd, qtfl, ttfl, Variant};
 
 const GCMS_SPECTRUM_INDEX: &str = "GCMS Raw Data/Spectrum Index";
 const GCMS_MS_RAW_DATA: &str = "GCMS Raw Data/MS Raw Data";
@@ -33,6 +34,21 @@ const TTFL_TUNING_RESULT: [&str; 3] = [
     "TTFL Tuning/Tuning Result 00",
     "TTFL Tuning/Tuning Result 01",
     "TTFL Tuning/Tuning Result 02",
+];
+
+/// Conventional LC detector channel names observed under the `LC Raw
+/// Data` top-level storage (see `docs/format/04-lcd-chromatogram-pda.md`).
+/// `Ch1`..`Ch4` are 0 bytes (unpopulated) in every locally available
+/// corpus file, `Ch5`/`Ch6` are real. Probed generically (not hardcoded
+/// to `Ch5`/`Ch6` specifically) since a different acquisition method
+/// could populate a different subset of the same 6 slots.
+const LC_CHROMATOGRAM_CHANNELS: [&str; 6] = [
+    "LC Raw Data/Chromatogram Ch1",
+    "LC Raw Data/Chromatogram Ch2",
+    "LC Raw Data/Chromatogram Ch3",
+    "LC Raw Data/Chromatogram Ch4",
+    "LC Raw Data/Chromatogram Ch5",
+    "LC Raw Data/Chromatogram Ch6",
 ];
 
 /// Decoded state for whichever of the 3 on-disk variants this file is,
@@ -72,6 +88,14 @@ pub struct Reader {
     /// the container (implausible for any real file) has an unset creation
     /// time.
     start_timestamp: Option<String>,
+    /// Decoded `(stream_name, chromatogram)` pairs from `LC Raw Data`,
+    /// see `raw::lc_chrom`. Only channels present *and* that decoded
+    /// cleanly (see `lc_chrom::decode_stream`'s doc comment on why a
+    /// single-valued stream like the corpus's `Ch5` is skipped rather
+    /// than guessed) end up here - usually empty for `.qgd`/QTOF files,
+    /// since `LC Raw Data` has only been observed populated on IT-TOF
+    /// files in the local corpus.
+    lc_chromatograms: Vec<(String, lc_chrom::LcChromatogram)>,
 }
 
 fn parse_u32_array(data: &[u8]) -> Vec<u32> {
@@ -151,11 +175,25 @@ impl Reader {
             }
         };
 
+        // `LC Raw Data/Chromatogram ChN` is a separate top-level storage
+        // from whichever `Decoded` variant above - present (when at all)
+        // alongside any of the 3 variants, not gated by `variant` here.
+        // See `raw::lc_chrom` and `LC_CHROMATOGRAM_CHANNELS`'s doc comment.
+        let lc_chromatograms: Vec<(String, lc_chrom::LcChromatogram)> = LC_CHROMATOGRAM_CHANNELS
+            .iter()
+            .filter_map(|path| {
+                let bytes = raw::read_stream_opt(&mut comp, path)?;
+                let chrom = lc_chrom::decode_stream(&bytes)?;
+                Some(((*path).to_string(), chrom))
+            })
+            .collect();
+
         Ok(Reader {
             stem,
             variant,
             decoded,
             start_timestamp,
+            lc_chromatograms,
         })
     }
 }
@@ -478,5 +516,38 @@ impl SpectrumSource for Reader {
             ),
         };
         Box::new(spectra.into_iter())
+    }
+
+    /// Chromatogram traces decoded from `LC Raw Data/Chromatogram ChN`
+    /// (see `raw::lc_chrom` and `docs/format/04-lcd-chromatogram-pda.md`).
+    /// Empty for files where none of the 6 conventional channel slots
+    /// are both present and cleanly decodable - most files in this
+    /// crate's scope, since this data has only been confirmed populated
+    /// on IT-TOF `.lcd` files in the local corpus.
+    fn iter_chromatograms<'a>(&'a mut self) -> Box<dyn Iterator<Item = ChromatogramRecord> + 'a> {
+        let records: Vec<ChromatogramRecord> = self
+            .lc_chromatograms
+            .iter()
+            .enumerate()
+            .map(|(index, (id, chrom))| ChromatogramRecord {
+                index,
+                id: id.clone(),
+                // PSI-MS MS:1000811 "electromagnetic radiation
+                // chromatogram" is the standard term for a conventional
+                // (non-MS) LC detector trace such as UV/RID - not
+                // MS:1000235 "total ion current chromatogram", which
+                // `ChromatogramRecord::chromatogram_type: None` would
+                // default to in the mzML writer.
+                chromatogram_type: Some(CvTerm::new(
+                    "MS:1000811",
+                    "electromagnetic radiation chromatogram",
+                )),
+                precursor_mz: None,
+                product_mz: None,
+                time_sec: chrom.time_sec.clone(),
+                intensity: chrom.intensity.clone(),
+            })
+            .collect();
+        Box::new(records.into_iter())
     }
 }

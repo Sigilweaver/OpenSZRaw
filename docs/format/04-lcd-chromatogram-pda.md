@@ -9,13 +9,16 @@ the literal path named in this document's title and in
 Sigilweaver/OpenSZRaw#2 - is present in every locally available corpus
 file's directory listing but is **0 bytes (empty) in all of them**.
 There is no real `LSS Raw Data` chromatogram payload to analyze in this
-corpus. All of this document's segment-level findings (both the prior
-session's and this session's) come from `PDA 3D Raw Data/3D Raw Data`,
-which is real and populated in every file that has a PDA detector
-(`MTBLS432/*.lcd`, `PXD025121/*.lcd`, `MSV000084197/20190607_NM16.lcd`).
-See "LC Raw Data - a different, unrelated chromatogram stream" near the
-end of this document for the one real chromatogram-shaped stream found
-locally, at a different path than the issue names.
+corpus. Most of this document's segment-level findings come from
+`PDA 3D Raw Data/3D Raw Data`, which is real and populated in every file
+that has a PDA detector (`MTBLS432/*.lcd`, `PXD025121/*.lcd`,
+`MSV000084197/20190607_NM16.lcd`), and remains undecoded. See "LC Raw
+Data - a different, unrelated chromatogram stream" and the "2026-07-20
+session (LC Raw Data Chromatogram Ch5/Ch6 decode)" section below for the
+other real chromatogram-shaped stream found locally, at a different path
+than the issue names - **this one now has a working decode** (`Ch6`;
+`Ch5` remains a confirmed-but-unresolved partial characterization), see
+Sigilweaver/OpenSZRaw#21.
 
 ## Factsheet (quick reference - see the dated sessions below for full evidence)
 
@@ -122,6 +125,22 @@ is a scannable summary, not a substitute for the detailed sections below
   quiet region, no length-prefix-looking field, zero bytes scattered
   not clustered - direct, by-eye confirmation of the already-established
   "hard, instantaneous cliff" aggregate-statistics finding.
+- **`LC Raw Data/Chromatogram ChN` (a different, unrelated stream from
+  `PDA 3D Raw Data` - see below) is now decoded for `Ch6`.** The outer
+  `RC\x00\x00` segment's body is itself divided into internal "pages" (up
+  to 256 samples each), each independently wrapped in a `u16` LE
+  byte-length prefix and matching suffix - the sub-segment structure this
+  document previously flagged as "not yet characterized." Within a page,
+  a byte `< 0x20` is a signed 5-bit literal sample delta and a byte
+  `>= 0x20` starts a 2-byte signed-13-bit wide delta; cumulative-summing
+  these deltas produces a smooth, physically plausible chromatogram in
+  all 5 locally available files. `Ch5` shares the identical, fully
+  verified page/tokenization framing but is a single repeated value for
+  its entire run in every available file, which makes its numeric
+  grammar (delta vs. absolute-value convention) untestable from this
+  corpus - reader code deliberately skips emitting it rather than guess.
+  See "2026-07-21 session (LC Raw Data Chromatogram Ch5/Ch6 decode)"
+  below, Sigilweaver/OpenSZRaw#21.
 
 **Ruled out** (see "This session's additional ruled-out hypotheses" and
 "further ruled-out hypotheses" for full detail): standard unsigned
@@ -187,10 +206,13 @@ both a random-byte and a shuffled-byte control (see 2026-07-20 session 7).
   *same* encoding as `PDA 3D Raw Data` at all - untested, since every
   locally available file has it empty. See "Further avenues" at the end
   of this document.
-- The `LC Raw Data/Chromatogram Ch5`/`Ch6` stream (real, populated, but
-  a different/simpler-looking encoding, out of this issue's named scope)
-  - not decoded, not attempted beyond the initial characterization. See
-  "LC Raw Data..." near the end of this document.
+- The `LC Raw Data/Chromatogram Ch5`/`Ch6` stream's exact wide-token bit
+  layout is corroborated by strong smoothness/physical-plausibility
+  evidence, not proven byte-exact the way the page framing and
+  literal/wide tokenization split are - and `Ch5`'s numeric grammar is
+  altogether untested (single repeated value in every available file).
+  See "2026-07-21 session (LC Raw Data Chromatogram Ch5/Ch6 decode)"
+  near the end of this document, Sigilweaver/OpenSZRaw#21.
 - `CheckSum` offsets 48 and 80 (confirmed content-dependent, not
   identified as any standard CRC/checksum algorithm nor as a plain
   count/derived size - see 2026-07-20 sessions 1 and 2).
@@ -2488,6 +2510,167 @@ scope (`PDA 3D Raw Data` / `LSS Raw Data`):
   doesn't have to rediscover that the populated data lives under `LC Raw
   Data`, not `LSS Raw Data`, in files that have it.
 
+**Update, 2026-07-21 (Sigilweaver/OpenSZRaw#21): this stream is now
+decoded for `Ch6`.** See the next section for the full derivation,
+evidence, and what remains open for `Ch5`.
+
+## 2026-07-21 session (LC Raw Data Chromatogram Ch5/Ch6 decode): `Ch6` fully decoded, `Ch5`'s numeric grammar remains untestable
+
+Picking up the lead flagged in the previous section and in "Further
+avenues" below (Sigilweaver/OpenSZRaw#21: decode the simpler, real
+`LC Raw Data/Chromatogram Ch5`/`Ch6` stream), this session reused
+`iter_segments`'s 24-byte `RC\x00\x00` header framing as a starting
+point, then found and verified the internal sub-segment structure the
+prior session's characterization flagged as not yet investigated. Worked
+against all 5 locally available `PXD020792/*.LCD` files' `Ch5` and `Ch6`
+streams. **Result: `Ch6` decodes cleanly and produces smooth, physically
+plausible chromatograms in all 5 files; `Ch5` shares the identical,
+fully-verified structural framing but its numeric grammar cannot be
+determined from this corpus (see below) and is deliberately left
+undecoded rather than guessed.**
+
+### Confirmed, byte-exact: internal "page" framing inside the one giant segment
+
+The prior session's characterization noted the whole stream is one giant
+`RC\x00\x00` segment (`u32[3]` spans the entire rest of the stream, `npts`
+= `u32[2]` = 7200 in every file/channel checked) - structurally different
+from PDA's thousands-of-small-segments layout. What it did not check is
+whether that one segment's *body* has its own internal structure. It
+does: the body is a back-to-back sequence of length-wrapped "pages", each
+a `u16` LE byte-length prefix, that many data bytes, then a `u16` LE
+suffix **equal to the prefix** - directly analogous to the "symmetric"
+envelope form already documented for PDA segments (`first_u16 ==
+last_u16 == len(body)`), just applied once per page instead of once per
+segment. Verified by a generic parser (read `u16` length, skip that many
+bytes, require the next `u16` to match, repeat until the payload is
+exactly consumed) requiring **zero leftover bytes** - this succeeded on
+every one of 290 pages checked (29 pages x `Ch5`/`Ch6` x 5 files), with
+zero exceptions. Page lengths are consistent with (but the parser itself
+does not assume) a fixed 256-sample buffer: `Ch5`'s pages are always
+exactly 512 bytes (256 samples x 2 bytes, never varying - `Ch5` never
+triggers a wide token, see below) except a final 64-byte page (32
+samples); `Ch6`'s pages are 256-281 bytes (256 samples at 1-2 bytes each,
+depending on how many wide tokens that page needed) except a final
+32-33-byte page. `28 * 256 + 32 = 7200 = npts` in both channels, in every
+file.
+
+### Confirmed, byte-exact: the literal/wide-token tokenization split
+
+Within a page, walking byte-by-byte with a magnitude threshold: a byte
+`< 0x20` is a 1-byte literal token, a byte `>= 0x20` starts a 2-byte wide
+token (that byte plus the following byte). This `(threshold=0x20,
+wide_width=2)` combination is the **unique** result of an exhaustive
+`threshold in 0..=255` x `wide_width in {2,3,4}` sweep (768 combinations)
+requiring every one of a representative file's 29 `Ch6` pages to decode
+to exactly its expected sample count (256, or the file's own final-page
+count) with zero leftover bytes - no other combination in the sweep
+achieved this on even one page, let alone all 29. Re-checked against all
+5 files' `Ch6` streams (145 pages total): zero exceptions. This directly
+answers the prior session's open question ("no obvious escape-pair
+pattern... found this session") - the escape pattern exists, it was just
+not found by the earlier session's shallower pass.
+
+`Ch5`'s single repeated byte pair (`82 00`) is also fully consistent with
+this same rule: `0x82 >= 0x20`, so every `Ch5` sample is a wide (2-byte)
+token, giving a page byte length of exactly `2 * sample_count` in every
+page - which is exactly what was observed (512 = 2*256, 64 = 2*32, with
+zero exceptions, no page ever landing in between). `Ch5` never exercises
+the literal-token branch at all in this corpus.
+
+### Strong (not byte-exact) evidence: the numeric interpretation of tokens
+
+The tokenization split above is a hard structural fact; the *numeric
+value* each token represents is a genuinely separate question, addressed
+next as a physical-plausibility argument (the approach this document's
+own "Further avenues" section explicitly recommends), not a second
+byte-exact proof.
+
+Interpreting each token as a **signed delta** and cumulative-summing
+across a channel - literal token `b`: `b` if `b < 16` else `b - 32`
+(signed 5-bit two's complement, range -16..+15); wide token `(b0, b1)`:
+`((b0 & 0x1F) << 8) | b1`, sign-extended over 13 bits (range
+-4096..+4095) - produces, for every one of the 5 files' `Ch6` streams, a
+smooth, low-magnitude, single-ramp-then-plateau trace: baseline near 0-100
+at the run start, a broad, gradually rising region through roughly the
+middle third of the run, then a stable plateau for the remainder, with a
+similar absolute ceiling (~8600-8900) in all 5 files despite the 5 runs
+being different samples (file names suggest a concentration/dilution
+series - `p95`, `p55`, `p400`, `p180`, `p170`). Mean per-sample delta
+magnitude across a full stream is **2.33**, versus **27.8-139.7** for
+every alternative byte-order/bit-width layout tried (swapping which byte
+holds the high bits, plain little-endian `int16`, full 16-bit
+sign-extension) - an order-of-magnitude difference, not a close call.
+Unsigned interpretation of the literal token was also checked and
+rejected: raw byte values alternate rapidly and semi-randomly between
+~0-3 and ~29-31 with no cumulative trend, which is not remotely smooth;
+only the signed-5-bit + cumulative-sum interpretation produces a
+plausible curve.
+
+Retention time per sample was derived from a corpus-wide cross-check, not
+read from any field in the `LC Raw Data` stream itself: `npts` = 7200 in
+every file, and `TTFL Raw Data/Retention Time`'s own max value (the MS
+run's total duration) is consistently just under, never over, 3590-3597
+seconds across all 5 files - matching `7200 * 0.5s = 3600s` (60 minutes)
+almost exactly, consistent with the LC channel recording a fixed 60-minute
+buffer (`28` full 256-sample/128-second pages plus one 32-sample/16-second
+final page) slightly longer than the shorter, variable-length actual MS
+acquisition in each file. `SAMPLE_INTERVAL_SEC = 0.5` is documented as a
+corpus-derived constant on this basis, the same way `docs/format/03`'s RLE
+decoder constants are.
+
+### `Ch5`'s numeric grammar: confirmed untestable from this corpus, deliberately left undecoded
+
+`Ch5` is byte-identical in structure and content across all 5 corpus
+files: every one of its 7200 samples, in every file, decodes to the same
+wide token (`raw` = 512 under the formula above). This is a genuine
+finding (the page/tokenization framing above is confirmed to apply to
+`Ch5` too, with zero exceptions), but it is a **degenerate** case for the
+value-grammar question: a constant delta of +512 integrated across 7200
+samples would produce an unbounded linear ramp reaching ~3.69 million,
+not the flat/quiet trace this document (and the underlying `PXD020792`
+corpus) consistently describes `Ch5` as - so if `Ch5` really does share
+`Ch6`'s delta+cumulative-sum convention, either the wide-token numeric
+formula above is specifically wrong for `Ch5`'s value range, or `82 00`
+is a special sentinel (e.g. "channel inactive/unconnected") rather than a
+generic magnitude token. Also notable: raw byte value `0x82` (130) never
+appears anywhere in `Ch6`'s escape-byte histogram across the whole
+corpus, consistent with it being `Ch5`-specific rather than a generic
+wide-token value `Ch6` also happens to use. Since every locally available
+file's `Ch5` is this same single unvarying value, there is no way to
+empirically distinguish "delta convention, unusual sentinel value" from
+"absolute-value convention, coincidentally constant" from "different
+convention entirely" - all three explain the observed bytes identically.
+**This is recorded as a confirmed, evidence-backed open question, not
+guessed past.** `crates/openszraw::raw::lc_chrom::decode_stream`
+implements this directly: it decodes any channel whose tokens show at
+least 2 distinct values, and returns `None` (skip, do not emit a
+chromatogram) for a single-valued stream like every corpus file's `Ch5` -
+a future file whose `Ch5` (or any other channel) actually varies would
+decode normally under the same rule, with no code change needed.
+
+### Rust implementation
+
+`crates/openszraw::raw::lc_chrom` implements the page framing,
+tokenization, and delta/cumulative-sum decode described above, wired into
+`Reader`'s `SpectrumSource::iter_chromatograms` (probing all 6
+conventional `LC Raw Data/Chromatogram ChN` channel names generically,
+not hardcoded to `Ch5`/`Ch6` specifically, in case a different
+acquisition method populates a different subset). Verified against the
+real corpus: all 5 `PXD020792/*.LCD` files yield exactly one decoded
+chromatogram (`Ch6`), `Ch5` is correctly skipped. Chromatogram records use
+PSI-MS `MS:1000811` "electromagnetic radiation chromatogram" (the
+standard term for a conventional, non-MS LC detector trace), not the
+mzML writer's `MS:1000235` "total ion current chromatogram" default. See
+`docs/format/06-known-limitations.md` for the residual-uncertainty
+summary (the wide-token bit layout is strongly evidenced, not
+byte-exact-proven; `Ch5` is unresolved, not merely unimplemented).
+
+Scripts written this session (all under `re/src/analysis/`, gitignored
+per this repo's existing convention): `lc_ch56_common.py` (stream/segment
+reader, reused by the scripts below), `lc_ch6_threshold_sweep.py` (the
+`(threshold, wide_width)` exhaustive sweep that found the unique
+`(0x20, 2)` result).
+
 ## Further avenues for a future session
 
 The 2026-07-19 closing summary's single recommendation (sharpen the
@@ -2553,15 +2736,23 @@ leads, not findings:
   "the 4-segment run was just too short to see real interior-channel
   structure" as an explanation; longer runs on two independent files
   show the identical low-diversity artifact, not new signal.
-- **Decode the simpler, real `LC Raw Data/Chromatogram Ch5`/`Ch6`
-  stream instead of (or before) `PDA 3D Raw Data`.** It's populated,
-  structurally simpler (one giant segment per channel, not thousands of
-  small ones), and a "quiet" channel (`Ch5`) is dominated by a single
-  repeating 2-byte value - a much easier starting point than the
-  321-wavelength PDA case, and would still deliver real chromatogram
-  support even though it's outside this issue's literally-named path.
-  Nobody has run any of this document's decode hypotheses against it
-  yet.
+- ~~Decode the simpler, real `LC Raw Data/Chromatogram Ch5`/`Ch6`
+  stream instead of (or before) `PDA 3D Raw Data`.~~ **Done** for `Ch6`,
+  see the "2026-07-21 session (LC Raw Data Chromatogram Ch5/Ch6 decode)"
+  section above (Sigilweaver/OpenSZRaw#21). Two follow-ups this raises,
+  neither attempted yet: (1) fetch a `PXD020792`-like accession where
+  `Ch5` (or some other conventionally-quiet channel slot) actually has
+  real signal, to test whether the wide-token numeric formula established
+  from `Ch6` generalizes or needs correction - the current corpus cannot
+  answer this, see the dated section's "`Ch5`'s numeric grammar" note;
+  (2) apply the *same* page-framing + tokenization approach tried here to
+  `PDA 3D Raw Data` itself - this document's PDA sessions never checked
+  for an internal sub-segment/page structure analogous to what was found
+  for `LC Raw Data` this session, since PDA's segments were already known
+  to be numerous and individually small (unlike `LC Raw Data`'s one giant
+  segment), but that doesn't rule out a *smaller*-scale internal page
+  structure within each PDA segment's body that nobody has specifically
+  looked for.
 - **Widen the corpus search specifically for a non-empty `LSS Raw
   Data/Chromatogram Ch*`** - the issue's literally-named target is
   0 bytes in every locally available file. It's untested whether that's
