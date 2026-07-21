@@ -18,7 +18,7 @@ families.
 | MTBLS12691 | MetaboLights | 12 | `.lcd` | QQQ (LCMS-8060, triple quadrupole) | MRM-targeted (per study protocol: predefined transitions from Shimadzu's Primary Metabolites method package) - **files fetched but not yet decodable by the reader, see Limitations** |
 | MTBLS11411 | MetaboLights | 5 | `.qgd` | GC-MS/MS (GC/MS-TQ8050 NX, triple quad) | Decodes via the existing Variant B (u64-index) path; scan-header `format` field reads `3` (not the `2`/implicit-`0x18` values docs/format/02 documents for Variants A/B) - decodes cleanly and passes conformance, but this field value itself is not otherwise investigated, see `docs/format/02` addendum |
 | MTBLS7425 | MetaboLights | 7 (all) | `.lcd` | QQQ (LCMS-8060NX) | MRM, 16S/23S rRNA (oligonucleotide, not small-molecule) - **first non-empty `LSS Raw Data/Chromatogram Ch1` in the corpus, resolves #20; see `docs/format/04`** |
-| MTBLS1960 | MetaboLights | 8 (all) | `.lcd` | Single quadrupole (LCMS-2020) | Alternating pos/neg scan, per-study method text |
+| MTBLS1960 | MetaboLights | 8 (all) | `.lcd` | Single quadrupole (LCMS-2020) | Full-scan profile, decoded (`docs/format/07`, resolves #24); alternating pos/neg scan per-study method text, not confirmed from bytes; single-source, no second single-quad LC-MS accession found |
 | MTBLS2376 | MetaboLights | 212 | `.lcd` | QQQ (LCMS-8040, triple quadrupole) | MRM, neonatal amino acid/acylcarnitine screening; one method is flow-injection (no HPLC column) |
 | MTBLS13204 | MetaboLights | 405 | `.lcd` | QTOF (LCMS-9030) | Fucus seaweed lipidomics |
 | MTBLS14423 | MetaboLights | 20 | `.lcd` | QQQ (LCMS-8040) | Amino acid/polyamine panel (Shimadzu LC-30A Nexera front end) |

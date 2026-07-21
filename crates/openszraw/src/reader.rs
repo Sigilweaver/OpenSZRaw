@@ -14,7 +14,7 @@ use openmassspec_core::{
     SpectrumSource,
 };
 
-use crate::raw::{self, lc_chrom, qgd, qtfl, ttfl, Variant};
+use crate::raw::{self, lc_chrom, mass_raw, qgd, qtfl, ttfl, Variant};
 
 const GCMS_SPECTRUM_INDEX: &str = "GCMS Raw Data/Spectrum Index";
 const GCMS_MS_RAW_DATA: &str = "GCMS Raw Data/MS Raw Data";
@@ -26,6 +26,9 @@ const QTFL_RETENTION_TIME: &str = "QTFL RawData/Retention Time";
 const TTFL_DATA_INDEX: &str = "TTFL Raw Data/Data Index";
 const TTFL_MS_RAW_DATA: &str = "TTFL Raw Data/MS Raw Data";
 const TTFL_RETENTION_TIME: &str = "TTFL Raw Data/Retention Time";
+
+const MASS_RAW_SPECTRUM_INDEX: &str = "Mass Raw Data/Spectrum Index";
+const MASS_RAW_MS_RAW_DATA: &str = "Mass Raw Data/MS Raw Data";
 
 /// The 3 on-disk copies of the tuning result stream that carry the
 /// index-to-m/z calibration data (see `raw::ttfl::Calibration`) - tried
@@ -73,6 +76,10 @@ enum Decoded {
         /// spectra fall back to the raw, uncalibrated index axis rather
         /// than fabricate a calibration (see `docs/format/06-known-limitations.md`).
         calibration: Option<ttfl::Calibration>,
+    },
+    SingleQuad {
+        ms_raw: Vec<u8>,
+        offsets: Vec<u32>,
     },
 }
 
@@ -172,6 +179,12 @@ impl Reader {
                     retention_time_ms,
                     calibration,
                 }
+            }
+            Variant::SingleQuad => {
+                let si = raw::read_stream(&mut comp, MASS_RAW_SPECTRUM_INDEX)?;
+                let ms_raw = raw::read_stream(&mut comp, MASS_RAW_MS_RAW_DATA)?;
+                let offsets = mass_raw::parse_u32_array(&si);
+                Decoded::SingleQuad { ms_raw, offsets }
             }
         };
 
@@ -287,6 +300,62 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> Vec<SpectrumRecord
                 }
             }
         }
+    }
+    out
+}
+
+/// Build spectra for the `.lcd` single-quadrupole variant. Every scan is
+/// a full-scan profile spectrum (no MRM/targeted mode has been observed
+/// for this variant in the local corpus) - see
+/// `docs/format/07-mass-raw-data-single-quad.md`.
+fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> Vec<SpectrumRecord> {
+    let n = offsets.len();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let start = offsets[i] as usize;
+        let end = if i + 1 < n {
+            offsets[i + 1] as usize
+        } else {
+            ms_raw.len()
+        };
+        if start > end || end > ms_raw.len() {
+            continue; // malformed offset pair: skip silently
+        }
+        let scan = match mass_raw::parse_scan(&ms_raw[start..end]) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let idx = out.len();
+        out.push(SpectrumRecord {
+            index: idx,
+            scan_number: (idx + 1) as u32,
+            native_id: format!("source={stem} start={} end={}", idx + 1, idx + 1),
+            ms_level: 1,
+            // A per-scan header field alternates between exactly 2
+            // values with strict scan-parity regularity (1,200/1,200
+            // over 2,400 scans in every corpus file), plausibly a
+            // polarity-switching flag - but with no confirmed mapping to
+            // a specific `Polarity` value, so left unpopulated rather
+            // than guessed, same treatment as the TTFL channel-mode flag
+            // (see `docs/format/06-known-limitations.md`).
+            polarity: None,
+            scan_mode: Some(ScanMode::Profile),
+            analyzer: Some(Analyzer::SQMS),
+            filter: None,
+            retention_time_sec: scan.retention_time_ms as f64 / 1000.0,
+            total_ion_current: None,
+            base_peak_mz: None,
+            base_peak_intensity: None,
+            low_mz: None,
+            high_mz: None,
+            ion_injection_time_ms: None,
+            inv_mobility: None,
+            faims_cv: None, // Shimadzu single-quad LC-MS instruments have no FAIMS interface.
+            precursor: None,
+            mz: scan.mz,
+            intensity: scan.intensity,
+            inv_mobility_per_peak: None,
+        });
     }
     out
 }
@@ -479,6 +548,23 @@ impl SpectrumSource for Reader {
                 start_timestamp: self.start_timestamp.clone(),
                 mobility_array_kind: None,
             },
+            Variant::SingleQuad => RunMetadata {
+                source_file_name: format!("{}.lcd", self.stem),
+                source_file_format: CvTerm::new("MS:1003009", "Shimadzu Biotech LCD format"),
+                native_id_format: CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
+                // No dedicated PSI-MS CV term for a specific single-quad
+                // Shimadzu LC-MS model (e.g. LCMS-2020) was found in
+                // psi-ms.obo; the `Mass Raw Data` storage confirms this
+                // format family (single-quadrupole hardware) but not an
+                // exact model, so this falls back to the generic
+                // Shimadzu instrument node rather than assume a specific
+                // model from a filename or study metadata.
+                instrument: CvTerm::new("MS:1000124", "Shimadzu instrument model"),
+                software_name: "openszraw".to_string(),
+                software_version: env!("CARGO_PKG_VERSION").to_string(),
+                start_timestamp: self.start_timestamp.clone(),
+                mobility_array_kind: None,
+            },
         }
     }
 
@@ -489,6 +575,7 @@ impl SpectrumSource for Reader {
             Decoded::Qgd { offsets, .. } => Some(offsets.len()),
             Decoded::Qtfl { records, .. } => Some(records.len()),
             Decoded::Ttfl { subsets, .. } => Some(subsets.len()),
+            Decoded::SingleQuad { offsets, .. } => Some(offsets.len()),
         }
     }
 
@@ -514,6 +601,9 @@ impl SpectrumSource for Reader {
                 retention_time_ms,
                 calibration.as_ref(),
             ),
+            Decoded::SingleQuad { ms_raw, offsets } => {
+                single_quad_spectra(&self.stem, ms_raw, offsets)
+            }
         };
         Box::new(spectra.into_iter())
     }

@@ -42,6 +42,10 @@ fn ttfl_partial_block_fixture() -> PathBuf {
     PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD025121/17.lcd")
 }
 
+fn single_quad_fixture() -> PathBuf {
+    PathBuf::from("/workspaces/Projects/Data/SZRaw/MTBLS1960/E1.lcd")
+}
+
 fn open_or_skip(path: &Path) -> Option<Reader> {
     if !path.exists() {
         eprintln!("skip: corpus not present at {}", path.display());
@@ -340,4 +344,67 @@ fn ttfl_lc_chromatogram_ch5_is_not_emitted() {
         chroms.iter().all(|c| !c.id.ends_with("Ch5")),
         "Ch5 should not be emitted (single repeated value, grammar untestable)"
     );
+}
+
+#[test]
+fn single_quad_conformance() {
+    let Some(mut reader) = open_or_skip(&single_quad_fixture()) else {
+        return;
+    };
+    let n = assert_source_invariants(&mut reader).expect("conformance invariants failed");
+    assert!(n > 0, "expected at least one spectrum");
+    println!("single-quad: {n} spectra");
+}
+
+/// See `docs/format/07-mass-raw-data-single-quad.md`: `raw::mass_raw`
+/// decodes full-scan profile spectra with a per-scan peak-record width
+/// (4 or 5 bytes, observed in this corpus) derived from the header's own
+/// peak count, verified byte-exact against `Mass Raw Data/TIC Data`
+/// during development (0 mismatches across 19,200 scans, 8 corpus
+/// files) - that check lives in the format doc / decode session, not
+/// here, since `TIC Data` itself is not currently surfaced through
+/// `SpectrumSource`.
+#[test]
+fn single_quad_peaks_are_plausible() {
+    let Some(mut reader) = open_or_skip(&single_quad_fixture()) else {
+        return;
+    };
+    let spectra: Vec<_> = reader.iter_spectra().collect();
+    assert!(!spectra.is_empty());
+    assert!(spectra.iter().all(|s| s.ms_level == 1));
+
+    let with_peaks: Vec<_> = spectra.iter().filter(|s| !s.mz.is_empty()).collect();
+    assert!(
+        !with_peaks.is_empty(),
+        "expected at least one spectrum with peaks"
+    );
+
+    // MTBLS1960 (LCMS-2020) scans m/z 400-2000 Da (see docs/format/07);
+    // allow a wider 1-3000 Da margin to cover other single-quad methods
+    // without being a vacuous check.
+    for s in &with_peaks {
+        for &mz in &s.mz {
+            assert!(
+                (1.0..=3000.0).contains(&mz),
+                "implausible single-quad m/z {mz} in spectrum {}",
+                s.native_id
+            );
+        }
+    }
+
+    // Retention time must be non-decreasing across the whole run, even
+    // though the header carries an alternating (plausibly polarity)
+    // flag - the two interleaved acquisition types still share one
+    // monotonically increasing `Retention Time` axis (see
+    // docs/format/07).
+    let mut last_rt = f64::MIN;
+    for s in &spectra {
+        assert!(
+            s.retention_time_sec + 1e-6 >= last_rt,
+            "RT regressed: {} -> {}",
+            last_rt,
+            s.retention_time_sec
+        );
+        last_rt = s.retention_time_sec;
+    }
 }

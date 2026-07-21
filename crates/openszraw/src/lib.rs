@@ -1,6 +1,6 @@
 //! Rust reader for Shimadzu LabSolutions mass spectrometry raw data.
 //!
-//! Supports three on-disk variants, all OLE2/CFBF containers (see
+//! Supports four on-disk variants, all OLE2/CFBF containers (see
 //! `docs/format/01-ole2-container.md`):
 //!
 //! - `.qgd` GCMSsolution GC-MS data (`GCMS Raw Data` storage) - full-scan
@@ -13,8 +13,11 @@
 //!   `docs/format/06-known-limitations.md`.
 //! - `.lcd` LabSolutions LC-MS, QTOF family (`QTFL RawData` storage) -
 //!   calibrated centroid spectra, see `docs/format/05-qtfl-centroid.md`.
+//! - `.lcd` LabSolutions LC-MS, single-quadrupole family (`Mass Raw Data`
+//!   storage, e.g. Shimadzu LCMS-2020) - full-scan profile spectra, see
+//!   `docs/format/07-mass-raw-data-single-quad.md`.
 //!
-//! `.lcd` files are dispatched between IT-TOF and QTOF by checking which
+//! `.lcd` files are dispatched between these families by checking which
 //! top-level CFBF storage is present, never by filename. `PDA 3D Raw Data`
 //! (secondary UV detector) is out of scope for this crate, see
 //! `docs/format/04-lcd-chromatogram-pda.md`.

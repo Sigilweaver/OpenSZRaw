@@ -1,6 +1,7 @@
 //! Low-level parsing modules for `.qgd` and `.lcd` files.
 
 pub mod lc_chrom;
+pub mod mass_raw;
 pub mod qgd;
 pub mod qtfl;
 pub mod timestamp;
@@ -10,7 +11,7 @@ use std::io::Read;
 
 use cfb::CompoundFile;
 
-/// The three on-disk variants this crate can decode, detected at `open()`
+/// The four on-disk variants this crate can decode, detected at `open()`
 /// time - see `docs/format/01-ole2-container.md` and the crate root doc
 /// comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,12 +22,28 @@ pub enum Variant {
     Ttfl,
     /// `.lcd` QTOF LC-MS data (`QTFL RawData` storage).
     Qtfl,
+    /// `.lcd` single-quadrupole LC-MS data (`Mass Raw Data` storage, e.g.
+    /// Shimadzu LCMS-2020) - see
+    /// `docs/format/07-mass-raw-data-single-quad.md`.
+    SingleQuad,
 }
 
 /// Root CFBF storage name for each variant.
 const GCMS_ROOT: &str = "GCMS Raw Data";
 const TTFL_ROOT: &str = "TTFL Raw Data";
 const QTFL_ROOT: &str = "QTFL RawData";
+const MASS_RAW_ROOT: &str = "Mass Raw Data";
+
+/// A substream that only exists when `MASS_RAW_ROOT` is actually
+/// populated. Every `.lcd` file - QQQ (`TLM Raw Data`) ones included -
+/// carries an always-present `Mass Raw Data` storage as boilerplate,
+/// empty of any substreams when it is not the file's real variant (the
+/// same trap `docs/format/06-known-limitations.md` section 7 documents
+/// for `QTFL RawData` on QQQ files: confirmed present-but-empty on both
+/// `MTBLS2376` and `MTBLS7425`, two QQQ accessions). Checking for this
+/// substream rather than the bare root storage avoids misdetecting QQQ
+/// files as `SingleQuad`.
+const MASS_RAW_MS_DATA: &str = "Mass Raw Data/MS Raw Data";
 
 /// Detect which variant a file is by extension, and (for `.lcd`) by probing
 /// which top-level CFBF storage is present. Never trusts the filename alone
@@ -50,9 +67,11 @@ pub fn detect_variant<F: Read + std::io::Seek>(
                 Ok(Variant::Ttfl)
             } else if comp.exists(QTFL_ROOT) {
                 Ok(Variant::Qtfl)
+            } else if comp.exists(MASS_RAW_MS_DATA) {
+                Ok(Variant::SingleQuad)
             } else {
                 Err(crate::Error::Parse(format!(
-                    "neither '{TTFL_ROOT}' nor '{QTFL_ROOT}' storage found in .lcd file"
+                    "none of '{TTFL_ROOT}', '{QTFL_ROOT}', or '{MASS_RAW_ROOT}' storage found in .lcd file"
                 )))
             }
         }

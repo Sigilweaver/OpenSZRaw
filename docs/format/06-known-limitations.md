@@ -377,20 +377,30 @@ channel from a different accession (see
 `docs/format/04`'s "Further avenues" section) is the concrete next step
 that could resolve it.
 
-## 12. Single-quadrupole (`.lcd` `Mass Raw Data`): a fifth on-disk variant, not detected or decoded at all
+## 12. Single-quadrupole (`.lcd` `Mass Raw Data`): a fourth on-disk variant (RESOLVED - see docs/format/07 "2026-07-21 session: full decode")
 
-Found while exploring metadata/processing streams after #20's corpus
-widening added the first single-quadrupole sample (`MTBLS1960`,
-Shimadzu LCMS-2020). Unlike every gap above, this isn't a decode gap in
-something the reader recognizes - `detect_variant` has no case for this
-variant's root storage (`Mass Raw Data`) at all, so these files fail to
-open with a generic, honest-but-uninformative error (`neither 'TTFL Raw
-Data' nor 'QTFL RawData' storage found`) rather than a message that
-names what they actually are. See `docs/format/07-mass-raw-data-single-quad.md`
-for the full storage-tree writeup and initial byte-shape reconnaissance
-(parallel `Retention Time`/`Spectrum Index` arrays, TIC data, a
-substantial `MS Raw Data` payload) - promising but not decoded.
-Corpus caveat: only one accession represents this variant so far.
+**Resolves Sigilweaver/OpenSZRaw#24.** Found while exploring metadata/
+processing streams after #20's corpus widening added the first
+single-quadrupole sample (`MTBLS1960`, Shimadzu LCMS-2020).
+`detect_variant` now recognizes this variant's root storage (`Mass Raw
+Data`) as `Variant::SingleQuad`, and `crates/openszraw::raw::mass_raw`
+decodes `MS Raw Data`'s per-scan payload: a fixed 64-byte header
+(scan index, retention time, an alternating - plausibly polarity -
+flag, and a peak count) followed by `n_peaks` fixed-width `[mz: u16 *
+10][intensity: LE uint]` records, with the intensity byte width derived
+per-scan from `payload_size / n_peaks` rather than assumed. Verified
+byte-exact against the file's own `TIC Data` stream (0 mismatches
+across 19,200 scans, 8 corpus files).
+
+**What remains open**: only one accession (`MTBLS1960`) represents this
+variant - a same-session search for a second single-quadrupole LC-MS
+source found none, so this decode is corroborated only by its internal
+`TIC Data` cross-check, not (yet) by an independent file. The 0x10
+header flag's alternating pattern is plausibly a polarity-switching
+indicator (matching this dataset's own study-method description) but
+has no confirmed mapping to a specific `Polarity` value, so
+`SpectrumRecord::polarity` is left `None` for this variant, the same
+treatment as the TTFL channel-mode flag in section 2 above.
 
 ## 13. Metadata and post-processing streams: an entire undocumented storage tree, not read anywhere
 
