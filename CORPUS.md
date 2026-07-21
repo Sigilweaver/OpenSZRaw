@@ -1,9 +1,10 @@
 # OpenSZRaw Validation Corpus
 
-Current size: approximately 2.9 GB across 151 files, spanning 9 accessions
+Current size: approximately 16 GB across 2976 files, spanning 16 accessions
 across three public repositories. 47 files are `.qgd` (GC-MS: 2 established
-accessions plus 1 new GC-MS/MS accession); 104 are `.lcd` (LC-MS), split
-across the IT-TOF, QTOF, and (new) QQQ instrument families.
+accessions plus 1 new GC-MS/MS accession); 2929 are `.lcd` (LC-MS), split
+across the IT-TOF, QTOF, QQQ, and (new) single-quadrupole instrument
+families.
 
 | Accession | Source | Files | Format | Instrument family | Acquisition mode |
 |---|---|---|---|---|---|
@@ -16,6 +17,13 @@ across the IT-TOF, QTOF, and (new) QQQ instrument families.
 | MTBLS14820 | MetaboLights | 10 | `.lcd` | QTOF (LCMS-9030) | Centroid, DDA (MS1 event_id=1, MS2 event_id=2 only in this dataset - narrower than MSV000084197's 2-4, not contradictory) |
 | MTBLS12691 | MetaboLights | 12 | `.lcd` | QQQ (LCMS-8060, triple quadrupole) | MRM-targeted (per study protocol: predefined transitions from Shimadzu's Primary Metabolites method package) - **files fetched but not yet decodable by the reader, see Limitations** |
 | MTBLS11411 | MetaboLights | 5 | `.qgd` | GC-MS/MS (GC/MS-TQ8050 NX, triple quad) | Decodes via the existing Variant B (u64-index) path; scan-header `format` field reads `3` (not the `2`/implicit-`0x18` values docs/format/02 documents for Variants A/B) - decodes cleanly and passes conformance, but this field value itself is not otherwise investigated, see `docs/format/02` addendum |
+| MTBLS7425 | MetaboLights | 7 (all) | `.lcd` | QQQ (LCMS-8060NX) | MRM, 16S/23S rRNA (oligonucleotide, not small-molecule) - **first non-empty `LSS Raw Data/Chromatogram Ch1` in the corpus, resolves #20; see `docs/format/04`** |
+| MTBLS1960 | MetaboLights | 8 (all) | `.lcd` | Single quadrupole (LCMS-2020) | Alternating pos/neg scan, per-study method text |
+| MTBLS2376 | MetaboLights | 212 | `.lcd` | QQQ (LCMS-8040, triple quadrupole) | MRM, neonatal amino acid/acylcarnitine screening; one method is flow-injection (no HPLC column) |
+| MTBLS13204 | MetaboLights | 405 | `.lcd` | QTOF (LCMS-9030) | Fucus seaweed lipidomics |
+| MTBLS14423 | MetaboLights | 20 | `.lcd` | QQQ (LCMS-8040) | Amino acid/polyamine panel (Shimadzu LC-30A Nexera front end) |
+| MTBLS14566 | MetaboLights | 24 | `.lcd` | QQQ (LCMS-8060NX) | Shimadzu 'LC/MS/MS Method Package for Primary Metabolites v3' |
+| MTBLS688 | MetaboLights | 2149 | `.lcd` | IT-TOF | 76-species medicinal plant extract survey; largest single accession in the corpus, split across two remote subdirectories (LCD1/LCD2) |
 
 Instrument family and acquisition-mode notes above are drawn from two
 different kinds of evidence, called out per-row so it's clear what's
@@ -73,6 +81,22 @@ re-sourcing pass. Once a candidate accession is found this way, its
 actual raw-file list still needs independent verification (per the
 extension-search gotcha above) - OmicsDI's own metadata can be as sparse
 as the underlying archive's.
+
+**2026-07-21 re-sourcing pass** (Sigilweaver/OpenSZRaw#20 - find a
+non-empty `LSS Raw Data` sample): OmicsDI's free-text search turned out
+too noisy for this pass's more specific detector/instrument-model
+queries - it returned mostly unrelated proteomics hits with no apparent
+relevance ranking. EBI's generic cross-domain search API, scoped to just
+the `metabolights` index
+(`https://www.ebi.ac.uk/ebisearch/ws/rest/metabolights?query=...`), gave
+much cleaner results for the same kind of query and is worth trying
+first over OmicsDI in future MetaboLights-specific passes. Separately: a
+candidate's top-level `FILES/` directory listing is not sufficient to
+rule it out - several real leads this pass (and MTBLS12691 from an
+earlier pass) nest raw files one or two levels deeper, under
+`FILES/RAW_FILES/` or similar; a listing check needs to recurse at least
+one level into subdirectories before concluding a dataset has no raw
+files.
 
 ## Fetch tooling
 
@@ -139,3 +163,11 @@ its source:
   15) - still a deliberately representative subset, not exhaustive.
 - `.gcd` (older GCsolution, non-MS GC data) is out of scope for a
   mass-spec reader and has no corpus representation by design.
+- All 2149 `MTBLS688` files lack the `LSS Raw Data` top-level storage
+  entirely, unlike every other IT-TOF file in the corpus (which has it
+  present but empty). Not investigated - flagged here since it's an
+  IT-TOF-family inconsistency a future session may want to explain.
+- 1 of 20 `MTBLS14423` files has no `LSS Raw Data` storage either; the
+  other 19 have it present but empty. Not investigated (that study also
+  cross-references a non-Shimadzu instrument for part of its method, so
+  this may be a mislabeled or differently-sourced file).

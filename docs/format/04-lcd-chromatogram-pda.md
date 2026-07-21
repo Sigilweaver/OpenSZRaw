@@ -4,21 +4,41 @@
 
 The `.lcd` files use a different encoding scheme for chromatograms (`LSS Raw Data`) and Photo-Diode Array (PDA) UV data (`PDA 3D Raw Data`) than the primary MS raw data streams.
 
-**Corpus note (this session)**: `LSS Raw Data/Chromatogram Ch1`..`Ch16` -
-the literal path named in this document's title and in
-Sigilweaver/OpenSZRaw#2 - is present in every locally available corpus
-file's directory listing but is **0 bytes (empty) in all of them**.
-There is no real `LSS Raw Data` chromatogram payload to analyze in this
-corpus. Most of this document's segment-level findings come from
-`PDA 3D Raw Data/3D Raw Data`, which is real and populated in every file
-that has a PDA detector (`MTBLS432/*.lcd`, `PXD025121/*.lcd`,
+**Corpus note (2026-07-21, resolves Sigilweaver/OpenSZRaw#20)**: `LSS Raw
+Data/Chromatogram Ch1`..`Ch16` - the literal path named in this
+document's title and in Sigilweaver/OpenSZRaw#2 - was 0 bytes in all 151
+files across 9 accessions in the corpus as of the prior session. A
+targeted re-sourcing pass (see #20) widened the corpus to 16 accessions
+and found one real sample: all 7 files in `MTBLS7425` (a Shimadzu
+NEXERA X2 / LCMS-8060NX study of 16S/23S rRNA, i.e. oligonucleotide, not
+small-molecule, LC-MS) have a genuinely populated `Chromatogram Ch1`
+(~7960-7975 bytes; `Ch2`-`Ch16` remain empty in these files too - only
+one of sixteen channels is used). The payload begins with the same
+24-byte `RC\x00\x00` segment header as the PDA stream (`u32[0]==17234`),
+but `u32[3]` (the block-size/walk-to-next field) spans the entire rest
+of the stream - one giant segment, the same structure independently
+found (and now decoded, see below) in `LC Raw Data/Chromatogram
+Ch5`/`Ch6`, not the PDA case's many small segments. Not decoded further
+this session - flagged for whoever picks up #21 or a future
+LSS-specific issue, since `LC Raw Data`'s now-working Ch6 decode (page
+framing plus literal/wide-token tokenization, see the "2026-07-20
+session (LC Raw Data Chromatogram Ch5/Ch6 decode)" section below) is a
+concrete template to try against this stream, and its small size makes
+it a much easier target than PDA's multi-thousand-segment stream. Every
+other newly-fetched accession this pass (`MTBLS1960` LCMS-2020
+single-quad, `MTBLS2376`/`MTBLS14423`/`MTBLS14566` QQQ, `MTBLS13204`
+QTOF) still shows `LSS Raw Data` present-but-empty like the original 151
+files; `MTBLS688` (IT-TOF, 2149 files) is a further data point in the
+other direction - it lacks the `LSS Raw Data` storage entirely rather
+than having it present-but-empty, cause not investigated. Most of this
+document's segment-level findings (aside from the new MTBLS7425 note
+above and the `LC Raw Data` Ch6 decode below) come from `PDA 3D Raw
+Data/3D Raw Data`, which is real and populated in every file that has a
+PDA detector (`MTBLS432/*.lcd`, `PXD025121/*.lcd`,
 `MSV000084197/20190607_NM16.lcd`), and remains undecoded. See "LC Raw
-Data - a different, unrelated chromatogram stream" and the "2026-07-20
-session (LC Raw Data Chromatogram Ch5/Ch6 decode)" section below for the
-other real chromatogram-shaped stream found locally, at a different path
-than the issue names - **this one now has a working decode** (`Ch6`;
-`Ch5` remains a confirmed-but-unresolved partial characterization), see
-Sigilweaver/OpenSZRaw#21.
+Data - a different, unrelated chromatogram stream" near the end of this
+document for the other real chromatogram-shaped stream found locally,
+at a different path than the issue names.
 
 ## Factsheet (quick reference - see the dated sessions below for full evidence)
 
@@ -2753,16 +2773,16 @@ leads, not findings:
   segment), but that doesn't rule out a *smaller*-scale internal page
   structure within each PDA segment's body that nobody has specifically
   looked for.
-- **Widen the corpus search specifically for a non-empty `LSS Raw
-  Data/Chromatogram Ch*`** - the issue's literally-named target is
-  0 bytes in every locally available file. It's untested whether that's
-  universal (e.g. `LSS Raw Data` is simply unused/legacy in this
-  LabSolutions version) or just a corpus gap (e.g. only populated for
-  acquisitions that use a conventional UV/RID detector instead of, or
-  alongside, PDA). Worth a targeted fetch pass (PRIDE/MetaboLights/
-  MassIVE, searching for older instrument models or explicitly
-  UV/RID-detector method descriptions) before assuming `PDA 3D Raw
-  Data` is a valid stand-in for the named stream.
+- **(Resolved 2026-07-21 by #20) Decode the real `LSS Raw
+  Data/Chromatogram Ch1` sample found in `MTBLS7425`.** The corpus gap
+  was real, not a universal legacy/unused stream - see the corpus note
+  at the top of this document. All 7 files are small (~7960-7975 bytes
+  for the one populated channel), single-segment (same `RC\x00\x00`
+  header as PDA, but one giant segment like `LC Raw Data`), and from an
+  oligonucleotide (rRNA) study rather than small-molecule metabolomics.
+  Nobody has run any decode hypothesis against it yet, but `LC Raw
+  Data`'s now-working Ch6 decode (immediately above) is a concrete
+  template to try first - same header, same one-giant-segment shape.
 - **(Revisited 2026-07-20, still open) Test spectral-domain
   (wavelength-to-wavelength) delta encoding, not just temporal
   (segment-to-segment) delta encoding.** The 2026-07-20 session found
