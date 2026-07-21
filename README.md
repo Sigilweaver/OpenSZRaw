@@ -7,6 +7,9 @@
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust MSRV](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 
+> Part of the [OpenMassSpec](https://github.com/Sigilweaver/OpenMassSpec)
+> stack for mass spectrometry raw-file access.
+
 Rust and Python reader for Shimadzu LabSolutions mass spectrometry raw
 data (`.lcd` LC-MS, `.qgd` GCMS, `.gcd` GC), with no Shimadzu SDK or
 software dependency. Covers `.qgd` GC-MS (full-scan profile and
@@ -14,13 +17,6 @@ MRM/targeted) and `.lcd` LC-MS across IT-TOF (profile) and QTOF
 (centroid) acquisitions.
 
 Documentation: [sigilweaver.app/openszraw/docs](https://sigilweaver.app/openszraw/docs)
-
-> Sibling readers in the same stack:
-> [OpenTFRaw](https://github.com/Sigilweaver/OpenTFRaw) (Thermo),
-> [OpenWRaw](https://github.com/Sigilweaver/OpenWRaw) (Waters),
-> [OpenTimsTDF](https://github.com/Sigilweaver/OpenTimsTDF) (Bruker),
-> [OpenARaw](https://github.com/Sigilweaver/OpenARaw) (Agilent),
-> [OpenSXRaw](https://github.com/Sigilweaver/OpenSXRaw) (SCIEX).
 
 ## Install
 
