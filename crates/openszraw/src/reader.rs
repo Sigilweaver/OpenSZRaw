@@ -512,10 +512,12 @@ impl SpectrumSource for Reader {
                 source_file_format: CvTerm::new("MS:1000560", "Shimadzu GCMSsolution QGD format"),
                 native_id_format: CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
                 instrument: CvTerm::new("MS:1000124", "Shimadzu instrument model"),
+                instrument_serial_number: None,
                 software_name: "openszraw".to_string(),
                 software_version: env!("CARGO_PKG_VERSION").to_string(),
                 start_timestamp: self.start_timestamp.clone(),
                 mobility_array_kind: None,
+                analyzers: Vec::new(),
             },
             Variant::Qtfl => RunMetadata {
                 source_file_name: format!("{}.lcd", self.stem),
@@ -530,10 +532,12 @@ impl SpectrumSource for Reader {
                 // file's own `GUMM_Information/ShimadzuLCMS-Q-TOF.1`
                 // substream, not by filename.
                 instrument: CvTerm::new("MS:1002998", "LCMS-9030"),
+                instrument_serial_number: None,
                 software_name: "openszraw".to_string(),
                 software_version: env!("CARGO_PKG_VERSION").to_string(),
                 start_timestamp: self.start_timestamp.clone(),
                 mobility_array_kind: None,
+                analyzers: Vec::new(),
             },
             Variant::Ttfl => RunMetadata {
                 source_file_name: format!("{}.lcd", self.stem),
@@ -543,10 +547,12 @@ impl SpectrumSource for Reader {
                 // `TTFL Raw Data` storage (this format family is
                 // IT-TOF-specific hardware).
                 instrument: CvTerm::new("MS:1000604", "LCMS-IT-TOF"),
+                instrument_serial_number: None,
                 software_name: "openszraw".to_string(),
                 software_version: env!("CARGO_PKG_VERSION").to_string(),
                 start_timestamp: self.start_timestamp.clone(),
                 mobility_array_kind: None,
+                analyzers: Vec::new(),
             },
             Variant::SingleQuad => RunMetadata {
                 source_file_name: format!("{}.lcd", self.stem),
@@ -560,10 +566,12 @@ impl SpectrumSource for Reader {
                 // Shimadzu instrument node rather than assume a specific
                 // model from a filename or study metadata.
                 instrument: CvTerm::new("MS:1000124", "Shimadzu instrument model"),
+                instrument_serial_number: None,
                 software_name: "openszraw".to_string(),
                 software_version: env!("CARGO_PKG_VERSION").to_string(),
                 start_timestamp: self.start_timestamp.clone(),
                 mobility_array_kind: None,
+                analyzers: Vec::new(),
             },
         }
     }
