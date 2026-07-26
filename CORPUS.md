@@ -144,20 +144,20 @@ its source:
 
 ## Limitations
 
-- **QQQ (`.lcd`, MTBLS12691) is fetched but not decodable by the reader
-  yet.** These files use a `TLM Raw Data` storage (structurally closer to
-  `.qgd` GC-MS's `MS Raw Data`/`Spectrum Index` pattern than to either
-  `TTFL Raw Data` or `QTFL RawData`), which `crates/openszraw` does not
-  currently parse. Worse, every `.lcd` file - including these QQQ ones -
-  carries an always-present but *empty* `QTFL RawData` storage as
-  boilerplate, and `raw::detect_variant` currently checks
-  `TTFL Raw Data` then falls back to treating *any* remaining
-  `QTFL RawData` presence as the QTOF variant - so these files are
-  currently misdetected as (broken) QTOF and fail to open with a
-  confusing "stream 'QTFL RawData/Centroid Index' not found" error,
-  rather than a clear "QQQ/TLM variant not yet supported" message. Filed
-  as a follow-up issue rather than fixed here (out of scope for a
-  corpus/docs-only pass) - see
+- **QQQ (`.lcd`, MTBLS12691 and siblings) is fetched but not decodable by
+  the reader yet.** These files use a `TLM Raw Data` storage
+  (structurally closer to `.qgd` GC-MS's `MS Raw Data`/`Spectrum Index`
+  pattern than to either `TTFL Raw Data` or `QTFL RawData`), which
+  `crates/openszraw` does not currently parse. Every `.lcd` file -
+  including these QQQ ones - carries an always-present but *empty*
+  `QTFL RawData` storage as boilerplate; `raw::detect_variant` no longer
+  misdetects that boilerplate as QTOF (fixed in
+  [Sigilweaver/OpenSZRaw#28](https://github.com/Sigilweaver/OpenSZRaw/issues/28),
+  which requires the QTOF-only `QTFL RawData/Centroid Index` substream
+  before classifying a file as QTOF), so these files now fail to open
+  with a clear "`TLM Raw Data` storage found - ... not yet supported"
+  message instead of a confusing QTOF stream-not-found error. Decoding
+  `TLM Raw Data` itself remains unimplemented - see
   [Sigilweaver/OpenSZRaw#5](https://github.com/Sigilweaver/OpenSZRaw/issues/5).
 - MTBLS432 has 93 real `.lcd` files total; 45 are now fetched (up from
   15) - still a deliberately representative subset, not exhaustive.

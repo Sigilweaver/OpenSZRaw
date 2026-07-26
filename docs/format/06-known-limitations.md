@@ -166,7 +166,7 @@ the addendum in `docs/format/05-qtfl-centroid.md` for the full detail.
 This was previously verified against only one file
 (`MSV000084197/20190607_NM16.lcd`).
 
-## 7. QQQ (`.lcd`): a fourth on-disk variant now has corpus representation, but is not decoded, and is currently misdetected as QTOF
+## 7. QQQ (`.lcd`): a fourth on-disk variant now has corpus representation, and is no longer misdetected as QTOF, but is still not decoded (PARTIALLY RESOLVES Sigilweaver/OpenSZRaw#5, RESOLVES Sigilweaver/OpenSZRaw#28)
 
 The 2026-07-18 corpus expansion pass added the first confirmed QQQ
 (triple quadrupole) sample to the corpus: `MTBLS12691`, an LCMS-8060
@@ -184,32 +184,46 @@ Two distinct things are going on, worth separating clearly:
    or `QTFL RawData`, which makes sense: QQQ and (single/triple-quad)
    GC-MS share a quadrupole-based architecture, unlike the TOF-based
    IT-TOF/QTOF formats. Nothing in `crates/openszraw::raw` parses this
-   storage - it is not read anywhere in the crate.
-2. **`raw::detect_variant` actively misidentifies these files as QTOF**,
+   storage - it is not read anywhere in the crate. **Still open** - a
+   new payload decoder deserves its own dedicated clean-room analysis,
+   not a rushed addition alongside the detection fix below.
+2. **`raw::detect_variant` actively misidentified these files as QTOF**,
    producing a confusing error rather than a clear "unsupported"
    message. Every `.lcd` file - QQQ ones included - carries an
    always-present `QTFL RawData` storage as boilerplate, even when it
    has none of the substreams (`Centroid Index`, `Centroid Data`) that
-   actually make a file QTOF. `detect_variant` checks `TTFL Raw Data`
-   first, then treats *any* remaining `QTFL RawData` presence as
+   actually make a file QTOF. `detect_variant` checked `TTFL Raw Data`
+   first, then treated *any* remaining `QTFL RawData` presence as
    sufficient to call it `Variant::Qtfl` - so a QQQ file with an empty
-   `QTFL RawData` storage is misclassified as QTOF, and then fails with
-   `stream 'QTFL RawData/Centroid Index' not found` instead of a clear
-   "this is a QQQ/TLM file, not yet supported" message. Confirmed by
-   listing the full CFBF storage tree of `MTBLS12691/20210325_024.lcd`:
-   `QTFL RawData` is present and empty, `TLM Raw Data` is present and
-   populated.
+   `QTFL RawData` storage was misclassified as QTOF, and then failed
+   with `stream 'QTFL RawData/Centroid Index' not found` instead of a
+   clear "this is a QQQ/TLM file, not yet supported" message. Confirmed
+   by listing the full CFBF storage tree of
+   `MTBLS12691/20210325_024.lcd`: `QTFL RawData` is present and empty,
+   `TLM Raw Data` is present and populated. **Fixed** - see below.
 
-Neither is fixed in this pass (out of scope for a corpus/docs-only
-session - implementing a new payload decoder deserves its own dedicated
-clean-room analysis, not a rushed addition here).
+**Resolved (item 2):** `detect_variant` now requires the presence of
+`QTFL RawData/Centroid Index` (a real QTOF substream, never present on
+the boilerplate-only `QTFL RawData` storage every QQQ `.lcd` file also
+carries) before classifying a file as `Variant::Qtfl`, the same
+substream-presence check `MASS_RAW_MS_DATA` already used to protect the
+`SingleQuad` classification from the identical trap. A `.lcd` file whose
+only real storage is `TLM Raw Data` now fails `detect_variant` with an
+explicit message naming `TLM Raw Data` and stating that the QQQ/
+triple-quadrupole variant is not decoded yet, instead of the misleading
+QTOF stream-not-found error. See
+`crates/openszraw::raw::detect_variant` and its `mod tests` for the
+corpus-shape regression test (an in-memory CFBF file reproducing
+`MTBLS12691/20210325_024.lcd`'s empty-`QTFL RawData`-plus-populated-
+`TLM Raw Data` shape).
+
+**Still open (item 1):** decoding `TLM Raw Data` itself remains
+unstarted - out of scope for a detection-only fix.
 [Sigilweaver/OpenSZRaw#5](https://github.com/Sigilweaver/OpenSZRaw/issues/5)
-tracks both: correcting `detect_variant` to name the QQQ/TLM variant
-explicitly (even before it's decoded, so the error message is honest
-about what wasn't understood rather than misleading), and eventually
-decoding `TLM Raw Data` itself using the now-available `MTBLS12691`
-corpus sample (12 files fetched; ~296 available in total across the
-study's five remote subdirectories, see `CORPUS.md`).
+tracks it, using the now-available `MTBLS12691` corpus sample (12 files
+fetched originally; the corpus has since grown to 5 QQQ accessions /
+275 files across at least 3 QQQ instrument generations, per the
+2026-07-24 cross-repo sweep noted on that issue - see `CORPUS.md`).
 
 ## 8. GC-MS/MS (`.qgd`, MTBLS11411): a third scan-header `format` value seen, not investigated
 
