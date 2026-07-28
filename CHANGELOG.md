@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `raw::detect_variant` no longer misdetects QQQ (triple-quadrupole,
+  e.g. LCMS-8060) `.lcd` files as QTOF. Every `.lcd` file - QQQ ones
+  included - carries an always-present but empty `QTFL RawData` storage
+  as boilerplate; detection now requires the QTOF-only
+  `QTFL RawData/Centroid Index` substream before classifying a file as
+  `Variant::Qtfl`, the same substream-presence check already used to
+  protect the `SingleQuad` classification from the identical trap. A
+  QQQ file now fails with a clear message naming `TLM Raw Data` and
+  stating that the variant is not decoded yet, instead of a confusing
+  `stream 'QTFL RawData/Centroid Index' not found` error. Full MRM/QQQ
+  payload decoding is still not implemented; see
+  `docs/format/06-known-limitations.md` #7 and
+  Sigilweaver/OpenSZRaw#5. Addresses Sigilweaver/OpenSZRaw#5;
+  resolves Sigilweaver/OpenSZRaw#28.
+
+  Contributed by @Nabejo.
+
 ## [0.1.2] - 2026-07-25
 
 ### Fixed
