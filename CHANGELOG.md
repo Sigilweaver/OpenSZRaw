@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped `openmassspec-core` to 1.4.0, which added
+  `acquisition_software_name`/`acquisition_software_version` to
+  `RunMetadata`. Neither is decoded here across any of the four
+  variants (Qgd, Qtfl, Ttfl, SingleQuad), so both default to `None` to
+  keep building against the new core version. Resolves
+  Sigilweaver/OpenSZRaw#30.
+
 ### Fixed
 
 - `raw::detect_variant` no longer misdetects QQQ (triple-quadrupole,
