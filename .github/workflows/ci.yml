@@ -2,13 +2,15 @@
 #
 # Jobs:
 #   build - cargo fmt --check, cargo clippy -D warnings, cargo test
-#           (Linux + macOS + Windows, mirroring publish.yml's wheel matrix)
+#           (Linux + macOS + Windows, mirroring publish.yml's wheel matrix).
+#           Downloads two small PRIDE `.qgd` corpus fixtures ahead of
+#           `cargo test` so crates/openszraw/tests/conformance.rs exercises
+#           real decode paths for the GC-MS profile and MRM variants
+#           instead of always skipping - see Sigilweaver/OpenMassSpec#5.
 #   docs  - Docusaurus site build (docs/)
 #
-# There is no corpus-download validation job yet. The conformance tests
-# (crates/openszraw/tests/conformance.rs) run against a real corpus fixture
-# that lives out of tree, so they skip cleanly when the corpus is absent -
-# as it is on CI. Matches the sibling readers' single-fixture stage.
+# All other conformance fixtures (the `.lcd` ones) still rely on the
+# out-of-tree corpus and continue to skip cleanly on CI.
 
 name: CI
 
@@ -25,6 +27,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  QGD_PROFILE_URL: >-
+    https://ftp.pride.ebi.ac.uk/pride/data/archive/2022/02/PXD019638/L-B2-Br0-1.qgd
+  QGD_PROFILE_NAME: PXD019638_L-B2-Br0-1.qgd
+  QGD_MRM_URL: >-
+    https://ftp.pride.ebi.ac.uk/pride/data/archive/2022/08/PXD034978/49_27a__8122021_11.qgd
+  QGD_MRM_NAME: PXD034978_49_27a__8122021_11.qgd
 
 jobs:
   build:
@@ -53,6 +61,14 @@ jobs:
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Download corpus fixtures for conformance tests
+        shell: bash
+        run: |
+          mkdir -p corpus
+          curl -sSL --user-agent "OpenSZRaw-CI/1.0" -o "corpus/$QGD_PROFILE_NAME" "$QGD_PROFILE_URL"
+          curl -sSL --user-agent "OpenSZRaw-CI/1.0" -o "corpus/$QGD_MRM_NAME" "$QGD_MRM_URL"
+          du -sh "corpus/$QGD_PROFILE_NAME" "corpus/$QGD_MRM_NAME"
 
       - name: cargo test
         run: cargo test --workspace --all-targets

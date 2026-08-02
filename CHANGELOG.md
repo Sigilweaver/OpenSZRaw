@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CI now downloads the two `.qgd` GC-MS corpus fixtures (PXD019638
+  full-scan profile, PXD034978 MRM) ahead of `cargo test`, so
+  `crates/openszraw/tests/conformance.rs`'s `qgd_profile_*`/`qgd_mrm_*`
+  tests exercise real decode paths in CI instead of always skipping.
+  Resolves Sigilweaver/OpenSZRaw#32.
+
 ## [0.1.3] - 2026-07-29
 
 ### Changed

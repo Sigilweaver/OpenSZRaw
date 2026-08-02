@@ -1,19 +1,50 @@
 //! Conformance tests against real corpus fixtures, one per on-disk
-//! variant. The corpus lives out of tree (`/workspaces/Projects/Data/SZRaw`)
-//! and is not checked into this repo, so these tests skip cleanly (rather
-//! than failing the build) when it is absent, e.g. on CI.
+//! variant. Most of the corpus lives out of tree
+//! (`/workspaces/Projects/Data/SZRaw`) and is not checked into this repo,
+//! so these tests skip cleanly (rather than failing the build) when a
+//! fixture is absent.
+//!
+//! The two `.qgd` GC-MS fixtures (`qgd_profile_fixture`/
+//! `qgd_mrm_fixture`) are the exception: `.github/workflows/ci.yml`'s
+//! `build` job downloads them into a repo-root, gitignored `corpus/`
+//! directory ahead of `cargo test`, so `qgd_profile_conformance` and
+//! `qgd_mrm_conformance` (plus the plausibility tests below them)
+//! exercise a real decode path in CI instead of always skipping - see
+//! Sigilweaver/OpenSZRaw#32.
 
 use openmassspec_core::conformance::assert_source_invariants;
 use openmassspec_core::SpectrumSource;
 use openszraw::reader::Reader;
 use std::path::{Path, PathBuf};
 
+/// Picks the first candidate that exists on disk, falling back to the
+/// first candidate (so `open_or_skip`'s exists-check still reports a
+/// sensible path when none are present).
+fn pick_fixture(candidates: &[PathBuf]) -> PathBuf {
+    candidates
+        .iter()
+        .find(|p| p.exists())
+        .cloned()
+        .unwrap_or_else(|| candidates[0].clone())
+}
+
 fn qgd_profile_fixture() -> PathBuf {
-    PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD019638/L-B2-Br0-1.qgd")
+    pick_fixture(&[
+        // CI / repo-root corpus dir (gitignored; populated by
+        // ci.yml's "Download corpus fixtures for conformance tests"
+        // step). This is the one CI actually uses.
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/PXD019638_L-B2-Br0-1.qgd"),
+        // Local dev setups with the full out-of-tree corpus checked out.
+        PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD019638/L-B2-Br0-1.qgd"),
+    ])
 }
 
 fn qgd_mrm_fixture() -> PathBuf {
-    PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD034978/49_27a__8122021_11.qgd")
+    pick_fixture(&[
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus/PXD034978_49_27a__8122021_11.qgd"),
+        PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD034978/49_27a__8122021_11.qgd"),
+    ])
 }
 
 fn qtfl_fixture() -> PathBuf {

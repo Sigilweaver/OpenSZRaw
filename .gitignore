@@ -1,6 +1,9 @@
 # Sandbox
 re/
 
+# CI-fetched corpus fixtures (see .github/workflows/ci.yml)
+/corpus/
+
 # Rust build artifacts
 /target/
 **/Cargo.lock
