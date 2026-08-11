@@ -367,8 +367,8 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> Vec<Spectr
 /// beyond what `docs/format/05-qtfl-centroid.md` originally covered
 /// (payload decode only). The real precursor m/z for MS2 scans lives in
 /// the separate, undecoded `QTFL RawData/DDA` stream, so MS2 records here
-/// only carry a `precursor_native_id` referencing the most recent MS1
-/// scan - see `docs/format/06-known-limitations.md`.
+/// only carry a `precursor_native_id` referencing the MS1 scan with the
+/// same `cycle_index` - see `docs/format/06-known-limitations.md`.
 fn qtfl_spectra(
     centroid_data: &[u8],
     records: &[qtfl::CentroidIndexRecord],
@@ -376,7 +376,7 @@ fn qtfl_spectra(
 ) -> Vec<SpectrumRecord> {
     let n = records.len();
     let mut out = Vec::with_capacity(n);
-    let mut last_ms1_native_id: Option<String> = None;
+    let mut ms1_native_id_by_cycle = std::collections::HashMap::new();
     for i in 0..n {
         let start = records[i].offset as usize;
         let end = if i + 1 < n {
@@ -396,7 +396,7 @@ fn qtfl_spectra(
         let idx = out.len();
         let native_id = format!("scan={}", idx + 1);
         if is_ms1 {
-            last_ms1_native_id = Some(native_id.clone());
+            ms1_native_id_by_cycle.insert(records[i].cycle_index, native_id.clone());
         }
         out.push(SpectrumRecord {
             index: idx,
@@ -420,7 +420,9 @@ fn qtfl_spectra(
                 None
             } else {
                 Some(PrecursorInfo {
-                    precursor_native_id: last_ms1_native_id.clone(),
+                    precursor_native_id: ms1_native_id_by_cycle
+                        .get(&records[i].cycle_index)
+                        .cloned(),
                     ..Default::default()
                 })
             },
@@ -655,5 +657,44 @@ impl SpectrumSource for Reader {
             })
             .collect();
         Box::new(records.into_iter())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qtfl_ms2_links_to_ms1_from_matching_cycle() {
+        // Put an MS2 from cycle 10 after cycle 11's MS1. A positional
+        // "most recent MS1" heuristic would incorrectly link it to scan=2.
+        let centroid_data = vec![0u8; qtfl::SCAN_HEADER_SIZE * 3];
+        let records = vec![
+            qtfl::CentroidIndexRecord {
+                offset: 0,
+                cycle_index: 10,
+                event_id: 1,
+            },
+            qtfl::CentroidIndexRecord {
+                offset: qtfl::SCAN_HEADER_SIZE as u32,
+                cycle_index: 11,
+                event_id: 1,
+            },
+            qtfl::CentroidIndexRecord {
+                offset: (qtfl::SCAN_HEADER_SIZE * 2) as u32,
+                cycle_index: 10,
+                event_id: 2,
+            },
+        ];
+
+        let spectra = qtfl_spectra(&centroid_data, &records, &[100, 200, 300]);
+        assert_eq!(spectra.len(), 3);
+        assert_eq!(
+            spectra[2]
+                .precursor
+                .as_ref()
+                .and_then(|p| p.precursor_native_id.as_deref()),
+            Some("scan=1")
+        );
     }
 }

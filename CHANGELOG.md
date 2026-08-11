@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests exercise real decode paths in CI instead of always skipping.
   Resolves Sigilweaver/OpenSZRaw#32.
 
+### Fixed
+
+- QTOF MS2 spectra now link to the MS1 survey scan with the same decoded
+  acquisition `cycle_index`, instead of relying on the most recently emitted
+  MS1 scan.
+
 ## [0.1.3] - 2026-07-29
 
 ### Changed
