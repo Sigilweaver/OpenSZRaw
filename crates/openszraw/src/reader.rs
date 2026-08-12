@@ -241,6 +241,8 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> Vec<SpectrumRecord
             qgd::QgdScan::Profile { mz, intensity, .. } => {
                 let idx = out.len();
                 out.push(SpectrumRecord {
+                    extra: ::std::collections::BTreeMap::new(),
+                    acquisition_event_id: None,
                     index: idx,
                     scan_number: (idx + 1) as u32,
                     native_id: format!("source={stem} start={} end={}", idx + 1, idx + 1),
@@ -271,6 +273,8 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> Vec<SpectrumRecord
                 for t in transitions {
                     let idx = out.len();
                     out.push(SpectrumRecord {
+                        extra: ::std::collections::BTreeMap::new(),
+                        acquisition_event_id: None,
                         index: idx,
                         scan_number: (idx + 1) as u32,
                         native_id: format!("source={stem} start={} end={}", idx + 1, idx + 1),
@@ -327,6 +331,8 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> Vec<Spectr
         };
         let idx = out.len();
         out.push(SpectrumRecord {
+            extra: ::std::collections::BTreeMap::new(),
+            acquisition_event_id: None,
             index: idx,
             scan_number: (idx + 1) as u32,
             native_id: format!("source={stem} start={} end={}", idx + 1, idx + 1),
@@ -399,6 +405,8 @@ fn qtfl_spectra(
             ms1_native_id_by_cycle.insert(records[i].cycle_index, native_id.clone());
         }
         out.push(SpectrumRecord {
+            extra: ::std::collections::BTreeMap::new(),
+            acquisition_event_id: None,
             index: idx,
             scan_number: (idx + 1) as u32,
             native_id,
@@ -470,6 +478,8 @@ fn ttfl_spectra(
             None => spec.index_axis,
         };
         out.push(SpectrumRecord {
+            extra: ::std::collections::BTreeMap::new(),
+            acquisition_event_id: None,
             index: idx,
             scan_number: (idx + 1) as u32,
             native_id: format!("source={stem} start={} end={}", idx + 1, idx + 1),
@@ -504,6 +514,7 @@ impl SpectrumSource for Reader {
     fn run_metadata(&self) -> RunMetadata {
         match self.variant {
             Variant::Qgd => RunMetadata {
+                extra: ::std::collections::BTreeMap::new(),
                 source_file_name: format!("{}.qgd", self.stem),
                 // No dedicated PSI-MS CV term for GCMSsolution's .qgd
                 // format was found in psi-ms.obo; fall back to the
@@ -524,6 +535,7 @@ impl SpectrumSource for Reader {
                 analyzers: Vec::new(),
             },
             Variant::Qtfl => RunMetadata {
+                extra: ::std::collections::BTreeMap::new(),
                 source_file_name: format!("{}.lcd", self.stem),
                 source_file_format: CvTerm::new("MS:1003009", "Shimadzu Biotech LCD format"),
                 native_id_format: CvTerm::new(
@@ -546,6 +558,7 @@ impl SpectrumSource for Reader {
                 analyzers: Vec::new(),
             },
             Variant::Ttfl => RunMetadata {
+                extra: ::std::collections::BTreeMap::new(),
                 source_file_name: format!("{}.lcd", self.stem),
                 source_file_format: CvTerm::new("MS:1003009", "Shimadzu Biotech LCD format"),
                 native_id_format: CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
@@ -563,6 +576,7 @@ impl SpectrumSource for Reader {
                 analyzers: Vec::new(),
             },
             Variant::SingleQuad => RunMetadata {
+                extra: ::std::collections::BTreeMap::new(),
                 source_file_name: format!("{}.lcd", self.stem),
                 source_file_format: CvTerm::new("MS:1003009", "Shimadzu Biotech LCD format"),
                 native_id_format: CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
