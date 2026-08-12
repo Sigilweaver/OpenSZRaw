@@ -265,17 +265,21 @@ mod tests {
     }
 
     #[test]
-    fn centroid_index_parses_offset_and_event_id() {
+    fn centroid_index_parses_offset_cycle_and_event_id() {
         let mut data = vec![0u8; INDEX_RECORD_SIZE * 2];
         LittleEndian::write_u32(&mut data[0..4], 0);
+        LittleEndian::write_u32(&mut data[8..12], 17); // cycle_index record 0
         LittleEndian::write_u32(&mut data[20..24], 1); // event_id record 0
         LittleEndian::write_u32(&mut data[24..28], 224);
+        LittleEndian::write_u32(&mut data[24 + 8..24 + 12], 17); // cycle_index record 1
         LittleEndian::write_u32(&mut data[24 + 20..24 + 24], 2); // event_id record 1
         let recs = parse_centroid_index(&data).expect("parse");
         assert_eq!(recs.len(), 2);
         assert_eq!(recs[0].offset, 0);
+        assert_eq!(recs[0].cycle_index, 17);
         assert_eq!(recs[0].event_id, 1);
         assert_eq!(recs[1].offset, 224);
+        assert_eq!(recs[1].cycle_index, 17);
         assert_eq!(recs[1].event_id, 2);
     }
 }
