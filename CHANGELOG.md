@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-12
+
 ### Added
 
 - CI now downloads the two `.qgd` GC-MS corpus fixtures (PXD019638
