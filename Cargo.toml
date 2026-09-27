@@ -18,7 +18,7 @@ categories = ["parser-implementations", "science"]
 openszraw = { path = "crates/openszraw" }
 openmassspec-core = "1.5.0"
 byteorder = "1.5.0"
-cfb = "0.14.0"
+cfb = "0.15.0"
 thiserror = "2"
 pyo3 = { version = "0.29", features = ["extension-module"] }
 
