@@ -105,6 +105,18 @@ pub struct Reader {
     lc_chromatograms: Vec<(String, lc_chrom::LcChromatogram)>,
 }
 
+/// Decoded source index fields for one physical scan or TTFL channel subset.
+#[derive(Debug, Clone)]
+pub struct ScanIndexInfo {
+    pub offset: u64,
+    pub end_offset: u64,
+    pub retention_time_ms: Option<u32>,
+    pub cycle_index: Option<u32>,
+    pub event_id: Option<u32>,
+    pub entry_index: Option<usize>,
+    pub channel_index: Option<usize>,
+}
+
 fn parse_u32_array(data: &[u8]) -> Vec<u32> {
     let n = data.len() / 4;
     (0..n)
@@ -113,6 +125,89 @@ fn parse_u32_array(data: &[u8]) -> Vec<u32> {
 }
 
 impl Reader {
+    pub fn variant(&self) -> Variant {
+        self.variant
+    }
+
+    pub fn ttfl_calibration(&self) -> Option<ttfl::Calibration> {
+        match &self.decoded {
+            Decoded::Ttfl { calibration, .. } => *calibration,
+            _ => None,
+        }
+    }
+
+    pub fn scan_index(&self) -> Vec<ScanIndexInfo> {
+        match &self.decoded {
+            Decoded::Qgd { ms_raw, offsets } => offsets
+                .iter()
+                .enumerate()
+                .map(|(i, &offset)| ScanIndexInfo {
+                    offset,
+                    end_offset: offsets.get(i + 1).copied().unwrap_or(ms_raw.len() as u64),
+                    retention_time_ms: None,
+                    cycle_index: None,
+                    event_id: None,
+                    entry_index: None,
+                    channel_index: None,
+                })
+                .collect(),
+            Decoded::Qtfl {
+                centroid_data,
+                records,
+                retention_time_ms,
+            } => records
+                .iter()
+                .enumerate()
+                .map(|(i, record)| ScanIndexInfo {
+                    offset: record.offset as u64,
+                    end_offset: records
+                        .get(i + 1)
+                        .map(|r| r.offset as u64)
+                        .unwrap_or(centroid_data.len() as u64),
+                    retention_time_ms: retention_time_ms.get(i).copied(),
+                    cycle_index: Some(record.cycle_index),
+                    event_id: Some(record.event_id),
+                    entry_index: None,
+                    channel_index: None,
+                })
+                .collect(),
+            Decoded::Ttfl {
+                subsets,
+                bounds,
+                retention_time_ms,
+                ..
+            } => subsets
+                .iter()
+                .zip(bounds)
+                .map(|(subset, &(start, end))| ScanIndexInfo {
+                    offset: start as u64,
+                    end_offset: end as u64,
+                    retention_time_ms: retention_time_ms.get(subset.entry_i).copied(),
+                    cycle_index: None,
+                    event_id: None,
+                    entry_index: Some(subset.entry_i),
+                    channel_index: Some(subset.sub_i),
+                })
+                .collect(),
+            Decoded::SingleQuad { ms_raw, offsets } => offsets
+                .iter()
+                .enumerate()
+                .map(|(i, &offset)| ScanIndexInfo {
+                    offset: offset as u64,
+                    end_offset: offsets
+                        .get(i + 1)
+                        .map(|&v| v as u64)
+                        .unwrap_or(ms_raw.len() as u64),
+                    retention_time_ms: None,
+                    cycle_index: None,
+                    event_id: None,
+                    entry_index: None,
+                    channel_index: None,
+                })
+                .collect(),
+        }
+    }
+
     /// Open a `.qgd` or `.lcd` file. The `.lcd` IT-TOF vs QTOF distinction
     /// is made by checking which top-level CFBF storage is present
     /// (`TTFL Raw Data` vs `QTFL RawData`), never by filename - see
@@ -269,12 +364,16 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> Vec<SpectrumRecord
                     inv_mobility_per_peak: None,
                 });
             }
-            qgd::QgdScan::Mrm { transitions, .. } => {
+            qgd::QgdScan::Mrm {
+                event_id,
+                transitions,
+                ..
+            } => {
                 for t in transitions {
                     let idx = out.len();
                     out.push(SpectrumRecord {
                         extra: ::std::collections::BTreeMap::new(),
-                        acquisition_event_id: None,
+                        acquisition_event_id: Some(event_id as u32),
                         index: idx,
                         scan_number: (idx + 1) as u32,
                         native_id: format!("source={stem} start={} end={}", idx + 1, idx + 1),
@@ -404,9 +503,14 @@ fn qtfl_spectra(
         if is_ms1 {
             ms1_native_id_by_cycle.insert(records[i].cycle_index, native_id.clone());
         }
+        let mut extra = ::std::collections::BTreeMap::new();
+        extra.insert(
+            "openszraw.cycle_index".to_string(),
+            records[i].cycle_index.to_string(),
+        );
         out.push(SpectrumRecord {
-            extra: ::std::collections::BTreeMap::new(),
-            acquisition_event_id: None,
+            extra,
+            acquisition_event_id: Some(records[i].event_id),
             index: idx,
             scan_number: (idx + 1) as u32,
             native_id,
@@ -477,8 +581,17 @@ fn ttfl_spectra(
             Some(cal) => spec.index_axis.iter().map(|&i| cal.mz(i)).collect(),
             None => spec.index_axis,
         };
+        let mut extra = ::std::collections::BTreeMap::new();
+        extra.insert(
+            "openszraw.entry_index".to_string(),
+            subset.entry_i.to_string(),
+        );
+        extra.insert(
+            "openszraw.channel_index".to_string(),
+            subset.sub_i.to_string(),
+        );
         out.push(SpectrumRecord {
-            extra: ::std::collections::BTreeMap::new(),
+            extra,
             acquisition_event_id: None,
             index: idx,
             scan_number: (idx + 1) as u32,
@@ -512,7 +625,7 @@ fn ttfl_spectra(
 
 impl SpectrumSource for Reader {
     fn run_metadata(&self) -> RunMetadata {
-        match self.variant {
+        let mut metadata = match self.variant {
             Variant::Qgd => RunMetadata {
                 extra: ::std::collections::BTreeMap::new(),
                 source_file_name: format!("{}.qgd", self.stem),
@@ -597,7 +710,24 @@ impl SpectrumSource for Reader {
                 mobility_array_kind: None,
                 analyzers: Vec::new(),
             },
+        };
+        metadata.extra.insert(
+            "openszraw.variant".to_string(),
+            format!("{:?}", self.variant).to_ascii_lowercase(),
+        );
+        if let Decoded::Ttfl {
+            calibration: Some(cal),
+            ..
+        } = &self.decoded
+        {
+            metadata
+                .extra
+                .insert("openszraw.calibration_a".to_string(), cal.a.to_string());
+            metadata
+                .extra
+                .insert("openszraw.calibration_b".to_string(), cal.b.to_string());
         }
+        metadata
     }
 
     fn spectrum_count_hint(&self) -> Option<usize> {
@@ -703,6 +833,15 @@ mod tests {
 
         let spectra = qtfl_spectra(&centroid_data, &records, &[100, 200, 300]);
         assert_eq!(spectra.len(), 3);
+        assert_eq!(spectra[0].acquisition_event_id, Some(1));
+        assert_eq!(spectra[2].acquisition_event_id, Some(2));
+        assert_eq!(
+            spectra[2]
+                .extra
+                .get("openszraw.cycle_index")
+                .map(String::as_str),
+            Some("10")
+        );
         assert_eq!(
             spectra[2]
                 .precursor
@@ -710,5 +849,27 @@ mod tests {
                 .and_then(|p| p.precursor_native_id.as_deref()),
             Some("scan=1")
         );
+    }
+
+    #[test]
+    fn qgd_mrm_transitions_carry_event_id() {
+        // One GC-MS MRM scan (event 102, mirroring the corpus bytes used
+        // in `qgd::tests::mrm_scan_roundtrip`) with 2 transitions. Both
+        // per-transition SpectrumRecords should carry the scan's
+        // decoded `event_id` as `acquisition_event_id`, not discard it.
+        let mut buf = vec![0u8; qgd::SCAN_HEADER_SIZE];
+        LittleEndian::write_u32(&mut buf[0x04..0x08], 387000); // retention_time_ms
+        LittleEndian::write_u16(&mut buf[0x18..0x1A], 102); // event_id
+        LittleEndian::write_u16(&mut buf[0x1A..0x1C], 2); // n_transitions
+        for (p, prod, i) in [(3202u16, 1160u16, 504u16), (3502, 1160, 508)] {
+            buf.extend_from_slice(&p.to_le_bytes());
+            buf.extend_from_slice(&prod.to_le_bytes());
+            buf.extend_from_slice(&i.to_le_bytes());
+        }
+
+        let spectra = qgd_spectra("test", &buf, &[0]);
+        assert_eq!(spectra.len(), 2);
+        assert_eq!(spectra[0].acquisition_event_id, Some(102));
+        assert_eq!(spectra[1].acquisition_event_id, Some(102));
     }
 }
