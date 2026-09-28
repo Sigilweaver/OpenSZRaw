@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index access. QTOF event IDs and cycle IDs and IT-TOF channel IDs are
   preserved in shared records.
 
+### Changed
+
+- Adopts `openmassspec-core` 2.0.0 (arrow 60). Rust users building against
+  core 1.x must upgrade core too.
+- `cfb` 0.14 -> 0.15.
+
+### Fixed
+
+- GC-MS MRM spectra now carry the decoded `event_id` in
+  `acquisition_event_id`, instead of it being decoded, unit-tested, and
+  then discarded before reaching the per-transition `SpectrumRecord`s.
+  Resolves Sigilweaver/OpenSZRaw#27.
+
 ## [0.1.4] - 2026-08-12
 
 ### Changed

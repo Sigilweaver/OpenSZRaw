@@ -364,12 +364,16 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> Vec<SpectrumRecord
                     inv_mobility_per_peak: None,
                 });
             }
-            qgd::QgdScan::Mrm { transitions, .. } => {
+            qgd::QgdScan::Mrm {
+                event_id,
+                transitions,
+                ..
+            } => {
                 for t in transitions {
                     let idx = out.len();
                     out.push(SpectrumRecord {
                         extra: ::std::collections::BTreeMap::new(),
-                        acquisition_event_id: None,
+                        acquisition_event_id: Some(event_id as u32),
                         index: idx,
                         scan_number: (idx + 1) as u32,
                         native_id: format!("source={stem} start={} end={}", idx + 1, idx + 1),
@@ -845,5 +849,27 @@ mod tests {
                 .and_then(|p| p.precursor_native_id.as_deref()),
             Some("scan=1")
         );
+    }
+
+    #[test]
+    fn qgd_mrm_transitions_carry_event_id() {
+        // One GC-MS MRM scan (event 102, mirroring the corpus bytes used
+        // in `qgd::tests::mrm_scan_roundtrip`) with 2 transitions. Both
+        // per-transition SpectrumRecords should carry the scan's
+        // decoded `event_id` as `acquisition_event_id`, not discard it.
+        let mut buf = vec![0u8; qgd::SCAN_HEADER_SIZE];
+        LittleEndian::write_u32(&mut buf[0x04..0x08], 387000); // retention_time_ms
+        LittleEndian::write_u16(&mut buf[0x18..0x1A], 102); // event_id
+        LittleEndian::write_u16(&mut buf[0x1A..0x1C], 2); // n_transitions
+        for (p, prod, i) in [(3202u16, 1160u16, 504u16), (3502, 1160, 508)] {
+            buf.extend_from_slice(&p.to_le_bytes());
+            buf.extend_from_slice(&prod.to_le_bytes());
+            buf.extend_from_slice(&i.to_le_bytes());
+        }
+
+        let spectra = qgd_spectra("test", &buf, &[0]);
+        assert_eq!(spectra.len(), 2);
+        assert_eq!(spectra[0].acquisition_event_id, Some(102));
+        assert_eq!(spectra[1].acquisition_event_id, Some(102));
     }
 }
