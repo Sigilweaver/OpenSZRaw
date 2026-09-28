@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Python spectra and run metadata now expose every shared record field.
+  Added bounded iteration, chromatograms, variant, calibration, and scan
+  index access. QTOF event IDs and cycle IDs and IT-TOF channel IDs are
+  preserved in shared records.
+
 ## [0.1.4] - 2026-08-12
 
 ### Changed
