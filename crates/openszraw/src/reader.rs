@@ -102,6 +102,24 @@ pub struct Reader {
     /// since `LC Raw Data` has only been observed populated on IT-TOF
     /// files in the local corpus.
     lc_chromatograms: Vec<(String, lc_chrom::LcChromatogram)>,
+    /// Source scans (or TTFL channel subsets) that the last
+    /// `iter_spectra` call could not decode and left out. See
+    /// [`Reader::skipped_scans`].
+    skipped_scans: usize,
+}
+
+/// Spectra decoded from one file, plus how many source scans were
+/// skipped because they could not be decoded.
+struct BuiltSpectra {
+    spectra: Vec<SpectrumRecord>,
+    skipped: usize,
+}
+
+/// Log one skipped source scan. Scan identity (`scan_number`,
+/// `native_id`) always comes from the scan's position in the source
+/// index, so a skip never renumbers the scans after it.
+fn log_skip(kind: &str, stem: &str, source_index: usize, reason: &dyn std::fmt::Display) {
+    log::debug!("openszraw: {stem}: skipping {kind} scan at source index {source_index}: {reason}");
 }
 
 /// Decoded source index fields for one physical scan or TTFL channel subset.
@@ -119,6 +137,16 @@ pub struct ScanIndexInfo {
 impl Reader {
     pub fn variant(&self) -> Variant {
         self.variant
+    }
+
+    /// Number of source scans (TTFL: channel subsets) that the most
+    /// recent [`SpectrumSource::iter_spectra`] call could not decode and
+    /// left out of its output. `0` before the first call. Each skip is
+    /// also logged at `debug` level via the `log` crate, with a `warn`
+    /// summary per call when any were skipped. Skips never renumber later
+    /// scans: `scan_number` and `native_id` come from the source index.
+    pub fn skipped_scans(&self) -> usize {
+        self.skipped_scans
     }
 
     pub fn ttfl_calibration(&self) -> Option<ttfl::Calibration> {
@@ -294,6 +322,7 @@ impl Reader {
             decoded,
             start_timestamp,
             lc_chromatograms,
+            skipped_scans: 0,
         })
     }
 }
@@ -306,9 +335,19 @@ impl Reader {
 /// for "N transitions measured simultaneously," so each transition is
 /// surfaced as its own record, matching how other vendor crates in this
 /// suite represent SRM/MRM data (e.g. opentfraw's flat-peak TSQ format).
-fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> Vec<SpectrumRecord> {
+///
+/// Identity: every source scan owns a fixed range of record "slots" (1
+/// for a profile scan, `n_transitions` for an MRM scan), and
+/// `scan_number`/`native_id` are the 1-based slot number. Slots are
+/// allocated from the source index whether or not the scan decodes - a
+/// skipped scan still consumes its header-declared slot count (or 1 if
+/// its header is unreadable) - so a skip does not renumber later scans.
+/// For files with no skipped scans this is identical to a running count.
+fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
     let n = offsets.len();
     let mut out = Vec::new();
+    let mut skipped = 0;
+    let mut next_slot = 0usize;
     for i in 0..n {
         let start = offsets[i] as usize;
         let end = if i + 1 < n {
@@ -316,23 +355,43 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> Vec<SpectrumRecord
         } else {
             ms_raw.len()
         };
+        let first_slot = next_slot;
         if start > end || end > ms_raw.len() {
-            continue; // malformed offset pair: skip silently
+            skipped += 1;
+            next_slot += 1;
+            log_skip(
+                "GC-MS",
+                stem,
+                i,
+                &format_args!("offset range {start}..{end} outside MS Raw Data"),
+            );
+            continue;
         }
-        let scan = match qgd::parse_scan(&ms_raw[start..end]) {
+        let scan_bytes = &ms_raw[start..end];
+        let scan = match qgd::parse_scan(scan_bytes) {
             Ok(s) => s,
-            Err(_) => continue,
+            Err(e) => {
+                skipped += 1;
+                next_slot += qgd::declared_record_count(scan_bytes);
+                log_skip("GC-MS", stem, i, &e);
+                continue;
+            }
+        };
+        next_slot += match &scan {
+            qgd::QgdScan::Profile { .. } => 1,
+            qgd::QgdScan::Mrm { transitions, .. } => transitions.len(),
         };
         let rt_sec = scan.retention_time_ms() as f64 / 1000.0;
         match scan {
             qgd::QgdScan::Profile { mz, intensity, .. } => {
                 let idx = out.len();
+                let id = first_slot + 1;
                 out.push(SpectrumRecord {
                     extra: ::std::collections::BTreeMap::new(),
                     acquisition_event_id: None,
                     index: idx,
-                    scan_number: (idx + 1) as u32,
-                    native_id: format!("source={stem} start={} end={}", idx + 1, idx + 1),
+                    scan_number: id as u32,
+                    native_id: format!("source={stem} start={id} end={id}"),
                     ms_level: 1,
                     // No polarity bit was found anywhere in the 32-byte
                     // scan header or Spectrum Index this session; left
@@ -361,14 +420,15 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> Vec<SpectrumRecord
                 transitions,
                 ..
             } => {
-                for t in transitions {
+                for (k, t) in transitions.into_iter().enumerate() {
                     let idx = out.len();
+                    let id = first_slot + k + 1;
                     out.push(SpectrumRecord {
                         extra: ::std::collections::BTreeMap::new(),
                         acquisition_event_id: Some(event_id as u32),
                         index: idx,
-                        scan_number: (idx + 1) as u32,
-                        native_id: format!("source={stem} start={} end={}", idx + 1, idx + 1),
+                        scan_number: id as u32,
+                        native_id: format!("source={stem} start={id} end={id}"),
                         ms_level: 2,
                         polarity: None,
                         scan_mode: Some(ScanMode::Centroid),
@@ -396,16 +456,20 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> Vec<SpectrumRecord
             }
         }
     }
-    out
+    BuiltSpectra {
+        spectra: out,
+        skipped,
+    }
 }
 
 /// Build spectra for the `.lcd` single-quadrupole variant. Every scan is
 /// a full-scan profile spectrum (no MRM/targeted mode has been observed
 /// for this variant in the local corpus) - see
 /// `docs/format/07-mass-raw-data-single-quad.md`.
-fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> Vec<SpectrumRecord> {
+fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> BuiltSpectra {
     let n = offsets.len();
     let mut out = Vec::with_capacity(n);
+    let mut skipped = 0;
     for i in 0..n {
         let start = offsets[i] as usize;
         let end = if i + 1 < n {
@@ -414,19 +478,31 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> Vec<Spectr
             ms_raw.len()
         };
         if start > end || end > ms_raw.len() {
-            continue; // malformed offset pair: skip silently
+            skipped += 1;
+            log_skip(
+                "single-quad",
+                stem,
+                i,
+                &format_args!("offset range {start}..{end} outside MS Raw Data"),
+            );
+            continue;
         }
         let scan = match mass_raw::parse_scan(&ms_raw[start..end]) {
             Ok(s) => s,
-            Err(_) => continue,
+            Err(e) => {
+                skipped += 1;
+                log_skip("single-quad", stem, i, &e);
+                continue;
+            }
         };
         let idx = out.len();
+        let id = i + 1;
         out.push(SpectrumRecord {
             extra: ::std::collections::BTreeMap::new(),
             acquisition_event_id: None,
             index: idx,
-            scan_number: (idx + 1) as u32,
-            native_id: format!("source={stem} start={} end={}", idx + 1, idx + 1),
+            scan_number: id as u32,
+            native_id: format!("source={stem} start={id} end={id}"),
             ms_level: 1,
             // A per-scan header field alternates between exactly 2
             // values with strict scan-parity regularity (1,200/1,200
@@ -454,7 +530,10 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> Vec<Spectr
             inv_mobility_per_peak: None,
         });
     }
-    out
+    BuiltSpectra {
+        spectra: out,
+        skipped,
+    }
 }
 
 /// Build spectra for the `.lcd` QTOF variant. `event_id == 1` is treated
@@ -467,12 +546,14 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> Vec<Spectr
 /// only carry a `precursor_native_id` referencing the MS1 scan with the
 /// same `cycle_index` - see `docs/format/06-known-limitations.md`.
 fn qtfl_spectra(
+    stem: &str,
     centroid_data: &[u8],
     records: &[qtfl::CentroidIndexRecord],
     retention_time_ms: &[u32],
-) -> Vec<SpectrumRecord> {
+) -> BuiltSpectra {
     let n = records.len();
     let mut out = Vec::with_capacity(n);
+    let mut skipped = 0;
     let mut ms1_native_id_by_cycle = std::collections::HashMap::new();
     for i in 0..n {
         let start = records[i].offset as usize;
@@ -482,16 +563,28 @@ fn qtfl_spectra(
             centroid_data.len()
         };
         if start > end || end > centroid_data.len() {
+            skipped += 1;
+            log_skip(
+                "QTOF",
+                stem,
+                i,
+                &format_args!("offset range {start}..{end} outside Centroid Data"),
+            );
             continue;
         }
         let spec = match qtfl::decode_scan(&centroid_data[start..end]) {
             Ok(s) => s,
-            Err(_) => continue,
+            Err(e) => {
+                skipped += 1;
+                log_skip("QTOF", stem, i, &e);
+                continue;
+            }
         };
         let rt_ms = retention_time_ms.get(i).copied().unwrap_or(0);
         let is_ms1 = records[i].event_id <= 1;
         let idx = out.len();
-        let native_id = format!("scan={}", idx + 1);
+        let id = i + 1;
+        let native_id = format!("scan={id}");
         if is_ms1 {
             ms1_native_id_by_cycle.insert(records[i].cycle_index, native_id.clone());
         }
@@ -504,7 +597,7 @@ fn qtfl_spectra(
             extra,
             acquisition_event_id: Some(records[i].event_id),
             index: idx,
-            scan_number: (idx + 1) as u32,
+            scan_number: id as u32,
             native_id,
             ms_level: if is_ms1 { 1 } else { 2 },
             polarity: None,
@@ -535,7 +628,10 @@ fn qtfl_spectra(
             inv_mobility_per_peak: None,
         });
     }
-    out
+    BuiltSpectra {
+        spectra: out,
+        skipped,
+    }
 }
 
 /// Build spectra for the `.lcd` IT-TOF variant. Each `(entry, channel)`
@@ -556,19 +652,30 @@ fn ttfl_spectra(
     bounds: &[(u32, u32)],
     retention_time_ms: &[u32],
     calibration: Option<&ttfl::Calibration>,
-) -> Vec<SpectrumRecord> {
+) -> BuiltSpectra {
     let mut out = Vec::with_capacity(subsets.len());
-    for (subset, &(start, end)) in subsets.iter().zip(bounds.iter()) {
+    let mut skipped = 0;
+    for (i, (subset, &(start, end))) in subsets.iter().zip(bounds.iter()).enumerate() {
         let start = start as usize;
         let end = end as usize;
         if start > end || end > ms_raw.len() {
+            skipped += 1;
+            log_skip(
+                "IT-TOF",
+                stem,
+                i,
+                &format_args!("offset range {start}..{end} outside MS Raw Data"),
+            );
             continue;
         }
         let Some(spec) = ttfl::decode_scan(&ms_raw[start..end]) else {
+            skipped += 1;
+            log_skip("IT-TOF", stem, i, &"no clean RLE payload boundary");
             continue;
         };
         let rt_ms = retention_time_ms.get(subset.entry_i).copied().unwrap_or(0);
         let idx = out.len();
+        let id = i + 1;
         let mz = match calibration {
             Some(cal) => spec.index_axis.iter().map(|&i| cal.mz(i)).collect(),
             None => spec.index_axis,
@@ -586,8 +693,8 @@ fn ttfl_spectra(
             extra,
             acquisition_event_id: None,
             index: idx,
-            scan_number: (idx + 1) as u32,
-            native_id: format!("source={stem} start={} end={}", idx + 1, idx + 1),
+            scan_number: id as u32,
+            native_id: format!("source={stem} start={id} end={id}"),
             ms_level: 1,
             // Neither polarity nor MS-level is recoverable per channel:
             // the header's `u32[5]` mode flag was investigated and is not
@@ -612,7 +719,10 @@ fn ttfl_spectra(
             inv_mobility_per_peak: None,
         });
     }
-    out
+    BuiltSpectra {
+        spectra: out,
+        skipped,
+    }
 }
 
 impl SpectrumSource for Reader {
@@ -736,13 +846,13 @@ impl SpectrumSource for Reader {
     }
 
     fn iter_spectra<'a>(&'a mut self) -> Box<dyn Iterator<Item = SpectrumRecord> + 'a> {
-        let spectra = match &self.decoded {
+        let built = match &self.decoded {
             Decoded::Qgd { ms_raw, offsets } => qgd_spectra(&self.stem, ms_raw, offsets),
             Decoded::Qtfl {
                 centroid_data,
                 records,
                 retention_time_ms,
-            } => qtfl_spectra(centroid_data, records, retention_time_ms),
+            } => qtfl_spectra(&self.stem, centroid_data, records, retention_time_ms),
             Decoded::Ttfl {
                 ms_raw,
                 subsets,
@@ -761,7 +871,15 @@ impl SpectrumSource for Reader {
                 single_quad_spectra(&self.stem, ms_raw, offsets)
             }
         };
-        Box::new(spectra.into_iter())
+        self.skipped_scans = built.skipped;
+        if built.skipped > 0 {
+            log::warn!(
+                "openszraw: {}: skipped {} undecodable source scan(s); enable debug logging for details",
+                self.stem,
+                built.skipped
+            );
+        }
+        Box::new(built.spectra.into_iter())
     }
 
     /// Chromatogram traces decoded from `LC Raw Data/Chromatogram ChN`
@@ -870,7 +988,7 @@ mod tests {
             },
         ];
 
-        let spectra = qtfl_spectra(&centroid_data, &records, &[100, 200, 300]);
+        let spectra = qtfl_spectra("test", &centroid_data, &records, &[100, 200, 300]).spectra;
         assert_eq!(spectra.len(), 3);
         assert_eq!(spectra[0].acquisition_event_id, Some(1));
         assert_eq!(spectra[2].acquisition_event_id, Some(2));
@@ -906,9 +1024,157 @@ mod tests {
             buf.extend_from_slice(&i.to_le_bytes());
         }
 
-        let spectra = qgd_spectra("test", &buf, &[0]);
+        let spectra = qgd_spectra("test", &buf, &[0]).spectra;
         assert_eq!(spectra.len(), 2);
         assert_eq!(spectra[0].acquisition_event_id, Some(102));
         assert_eq!(spectra[1].acquisition_event_id, Some(102));
+    }
+
+    /// One valid GC-MS profile scan with a single peak.
+    fn qgd_profile_scan() -> Vec<u8> {
+        let mut buf = vec![0u8; qgd::SCAN_HEADER_SIZE];
+        LittleEndian::write_u16(&mut buf[0x14..0x16], 2); // format
+        LittleEndian::write_u16(&mut buf[0x16..0x18], 1); // n_peaks
+        buf.extend_from_slice(&1000u16.to_le_bytes());
+        buf.extend_from_slice(&5u16.to_le_bytes());
+        buf
+    }
+
+    /// One GC-MS MRM scan with `n` transitions; `corrupt` makes the
+    /// payload one byte short so it fails to decode.
+    fn qgd_mrm_scan(n: u16, corrupt: bool) -> Vec<u8> {
+        let mut buf = vec![0u8; qgd::SCAN_HEADER_SIZE];
+        LittleEndian::write_u16(&mut buf[0x18..0x1A], 102);
+        LittleEndian::write_u16(&mut buf[0x1A..0x1C], n);
+        for _ in 0..n {
+            buf.extend_from_slice(&[0x82, 0x0C, 0x88, 0x04, 0x10, 0x00]);
+        }
+        if corrupt {
+            buf.pop();
+        }
+        buf
+    }
+
+    fn concat(scans: &[Vec<u8>]) -> (Vec<u8>, Vec<u64>) {
+        let mut data = Vec::new();
+        let mut offsets = Vec::new();
+        for scan in scans {
+            offsets.push(data.len() as u64);
+            data.extend_from_slice(scan);
+        }
+        (data, offsets)
+    }
+
+    fn ids(spectra: &[SpectrumRecord]) -> Vec<(usize, u32, String)> {
+        spectra
+            .iter()
+            .map(|s| (s.index, s.scan_number, s.native_id.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn qgd_profile_skip_does_not_renumber_later_scans() {
+        let bad = vec![0u8; 8]; // too short for a header
+        let (data, offsets) = concat(&[qgd_profile_scan(), bad, qgd_profile_scan()]);
+        let built = qgd_spectra("f", &data, &offsets);
+        assert_eq!(built.skipped, 1);
+        assert_eq!(
+            ids(&built.spectra),
+            vec![
+                (0, 1, "source=f start=1 end=1".to_string()),
+                (1, 3, "source=f start=3 end=3".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn qgd_mrm_skip_reserves_declared_transition_slots() {
+        // Scan 1 declares 3 transitions but is corrupt; scan 2's records
+        // must still start at slot 2 + 3 + 1 = 6.
+        let (data, offsets) = concat(&[
+            qgd_mrm_scan(2, false),
+            qgd_mrm_scan(3, true),
+            qgd_mrm_scan(2, false),
+        ]);
+        let built = qgd_spectra("f", &data, &offsets);
+        assert_eq!(built.skipped, 1);
+        let numbers: Vec<u32> = built.spectra.iter().map(|s| s.scan_number).collect();
+        assert_eq!(numbers, vec![1, 2, 6, 7]);
+        let indices: Vec<usize> = built.spectra.iter().map(|s| s.index).collect();
+        assert_eq!(indices, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn qgd_out_of_range_offset_is_counted() {
+        let (data, _) = concat(&[qgd_profile_scan()]);
+        let built = qgd_spectra("f", &data, &[0, 10_000]);
+        // Scan 0 runs to offset 10_000 (past the end): skipped. Scan 1
+        // starts past the end: skipped too.
+        assert_eq!(built.skipped, 2);
+        assert!(built.spectra.is_empty());
+    }
+
+    #[test]
+    fn single_quad_skip_does_not_renumber_later_scans() {
+        let good = {
+            let mut buf = vec![0u8; mass_raw::SCAN_HEADER_SIZE];
+            LittleEndian::write_u16(&mut buf[0x36..0x38], 1);
+            buf.extend_from_slice(&4000u16.to_le_bytes());
+            buf.extend_from_slice(&7u16.to_le_bytes());
+            buf
+        };
+        let (data, offsets) = concat(&[good.clone(), vec![0u8; 4], good]);
+        let offsets: Vec<u32> = offsets.iter().map(|&o| o as u32).collect();
+        let built = single_quad_spectra("f", &data, &offsets);
+        assert_eq!(built.skipped, 1);
+        assert_eq!(
+            ids(&built.spectra),
+            vec![
+                (0, 1, "source=f start=1 end=1".to_string()),
+                (1, 3, "source=f start=3 end=3".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn qtfl_skip_does_not_renumber_later_scans() {
+        // Scan 1 is 4 bytes long, too short for a header.
+        let h = qtfl::SCAN_HEADER_SIZE;
+        let centroid_data = vec![0u8; 2 * h + 4];
+        let rec = |offset: usize, cycle_index| qtfl::CentroidIndexRecord {
+            offset: offset as u32,
+            cycle_index,
+            event_id: 1,
+        };
+        let records = vec![rec(0, 1), rec(h, 2), rec(h + 4, 3)];
+        let built = qtfl_spectra("f", &centroid_data, &records, &[1, 2, 3]);
+        assert_eq!(built.skipped, 1);
+        assert_eq!(
+            ids(&built.spectra),
+            vec![(0, 1, "scan=1".to_string()), (1, 3, "scan=3".to_string())]
+        );
+    }
+
+    #[test]
+    fn ttfl_skip_does_not_renumber_later_subsets() {
+        let mut ms_raw = vec![0u8; ttfl::SCAN_HEADER_SIZE]; // empty payload: decodes
+        ms_raw.extend_from_slice(&[0u8; 10]); // too short for a header
+        ms_raw.extend_from_slice(&[0u8; ttfl::SCAN_HEADER_SIZE]);
+        let sub = |entry_i, offset| ttfl::DataIndexSubset {
+            entry_i,
+            sub_i: 0,
+            offset,
+        };
+        let subsets = vec![sub(0, 0), sub(1, 64), sub(2, 74)];
+        let bounds = vec![(0, 64), (64, 74), (74, 138)];
+        let built = ttfl_spectra("f", &ms_raw, &subsets, &bounds, &[1, 2, 3], None);
+        assert_eq!(built.skipped, 1);
+        assert_eq!(
+            ids(&built.spectra),
+            vec![
+                (0, 1, "source=f start=1 end=1".to_string()),
+                (1, 3, "source=f start=3 end=3".to_string()),
+            ]
+        );
     }
 }

@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   payload took about 6 s to reject (quadratic search); it now takes
   under 1 ms. Results are unchanged (checked against the old search by a
   randomized test).
+- A scan that cannot be decoded no longer renumbers every scan after it.
+  `scan_number` and `native_id` now come from the scan's position in the
+  source index (GC-MS MRM: its transition slots, reserved from the
+  header even when the payload is bad). `index` stays the dense output
+  position. Output is unchanged for files with no skipped scans.
+
+### Added
+
+- `Reader::skipped_scans()` reports how many source scans the last
+  `iter_spectra` call left out. Each skip is logged at `debug` level
+  through the `log` crate, with one `warn` summary per call. Adds a `log`
+  dependency.
 
 ## [0.2.0] - 2026-09-28
 

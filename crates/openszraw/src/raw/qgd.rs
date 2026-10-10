@@ -110,6 +110,24 @@ fn profile_intensity_width(format: u16) -> Option<usize> {
 /// surfaced.
 const PROFILE_U32_VALUE_MASK: u32 = 0x7FFF_FFFF;
 
+/// How many spectrum records a scan that failed [`parse_scan`] would have
+/// produced, judged from its header alone: the declared transition count
+/// (offset 0x1A) for an MRM-shaped header (`Format` slot at 0x14 zero),
+/// otherwise 1. Used only to keep record numbering source-stable across
+/// skipped scans.
+pub fn declared_record_count(scan_bytes: &[u8]) -> usize {
+    if scan_bytes.len() < SCAN_HEADER_SIZE {
+        return 1;
+    }
+    let format_a = LittleEndian::read_u16(&scan_bytes[0x14..0x16]);
+    let n_transitions_b = LittleEndian::read_u16(&scan_bytes[0x1A..0x1C]);
+    if format_a == 0 && n_transitions_b > 0 {
+        n_transitions_b as usize
+    } else {
+        1
+    }
+}
+
 /// Parse one scan from `MS Raw Data` given its full byte range (32-byte
 /// header + payload, bounded by consecutive `Spectrum Index` offsets).
 ///
