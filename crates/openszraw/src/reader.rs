@@ -113,6 +113,9 @@ pub struct Reader {
 struct BuiltSpectra {
     spectra: Vec<SpectrumRecord>,
     skipped: usize,
+    /// Emitted spectra whose `Retention Time` record was missing, so
+    /// their `retention_time` is 0.
+    missing_rt: usize,
 }
 
 /// Log one skipped source scan. Scan identity (`scan_number`,
@@ -287,6 +290,11 @@ impl Reader {
                     .iter()
                     .find_map(|path| raw::read_stream_opt(&mut comp, path))
                     .and_then(|data| ttfl::parse_calibration(&data));
+                if calibration.is_none() {
+                    log::warn!(
+                        "openszraw: {stem}: no usable TTFL Tuning calibration; m/z is the raw, uncalibrated time-bin index"
+                    );
+                }
                 Decoded::Ttfl {
                     ms_raw,
                     subsets,
@@ -311,7 +319,12 @@ impl Reader {
             .iter()
             .filter_map(|path| {
                 let bytes = raw::read_stream_opt(&mut comp, path)?;
-                let chrom = lc_chrom::decode_stream(&bytes)?;
+                let Some(chrom) = lc_chrom::decode_stream(&bytes) else {
+                    log::debug!(
+                        "openszraw: {stem}: {path} present but not decoded (unrecognised framing or constant channel); omitted"
+                    );
+                    return None;
+                };
                 Some(((*path).to_string(), chrom))
             })
             .collect();
@@ -347,6 +360,7 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
     let n = offsets.len();
     let mut out = Vec::new();
     let mut skipped = 0;
+    let missing_rt = 0;
     let mut next_slot = 0usize;
     for i in 0..n {
         let start = offsets[i] as usize;
@@ -393,9 +407,9 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
                     scan_number: id as u32,
                     native_id: format!("source={stem} start={id} end={id}"),
                     ms_level: 1,
-                    // No polarity bit was found anywhere in the 32-byte
-                    // scan header or Spectrum Index this session; left
-                    // unpopulated rather than assumed.
+                    // No polarity bit is known in the 32-byte scan
+                    // header or Spectrum Index; left unpopulated rather
+                    // than assumed.
                     polarity: None,
                     scan_mode: Some(ScanMode::Profile),
                     analyzer: Some(Analyzer::SQMS),
@@ -459,6 +473,7 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
     BuiltSpectra {
         spectra: out,
         skipped,
+        missing_rt,
     }
 }
 
@@ -470,6 +485,7 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> BuiltSpect
     let n = offsets.len();
     let mut out = Vec::with_capacity(n);
     let mut skipped = 0;
+    let missing_rt = 0;
     for i in 0..n {
         let start = offsets[i] as usize;
         let end = if i + 1 < n {
@@ -533,15 +549,15 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> BuiltSpect
     BuiltSpectra {
         spectra: out,
         skipped,
+        missing_rt,
     }
 }
 
 /// Build spectra for the `.lcd` QTOF variant. `event_id == 1` is treated
 /// as the MS1 survey scan and `event_id > 1` as an MS2/DDA product scan,
-/// per the cycle structure verified this session (see
-/// `raw::qtfl::CentroidIndexRecord::event_id`'s doc comment) - this goes
-/// beyond what `docs/format/05-qtfl-centroid.md` originally covered
-/// (payload decode only). The real precursor m/z for MS2 scans lives in
+/// per the verified cycle structure (see
+/// `raw::qtfl::CentroidIndexRecord::event_id`'s doc comment). The real
+/// precursor m/z for MS2 scans lives in
 /// the separate, undecoded `QTFL RawData/DDA` stream, so MS2 records here
 /// only carry a `precursor_native_id` referencing the MS1 scan with the
 /// same `cycle_index` - see `docs/format/06-known-limitations.md`.
@@ -554,6 +570,7 @@ fn qtfl_spectra(
     let n = records.len();
     let mut out = Vec::with_capacity(n);
     let mut skipped = 0;
+    let mut missing_rt = 0;
     let mut ms1_native_id_by_cycle = std::collections::HashMap::new();
     for i in 0..n {
         let start = records[i].offset as usize;
@@ -580,7 +597,10 @@ fn qtfl_spectra(
                 continue;
             }
         };
-        let rt_ms = retention_time_ms.get(i).copied().unwrap_or(0);
+        let rt_ms = retention_time_ms.get(i).copied().unwrap_or_else(|| {
+            missing_rt += 1;
+            0
+        });
         let is_ms1 = records[i].event_id <= 1;
         let idx = out.len();
         let id = i + 1;
@@ -631,6 +651,7 @@ fn qtfl_spectra(
     BuiltSpectra {
         spectra: out,
         skipped,
+        missing_rt,
     }
 }
 
@@ -655,6 +676,7 @@ fn ttfl_spectra(
 ) -> BuiltSpectra {
     let mut out = Vec::with_capacity(subsets.len());
     let mut skipped = 0;
+    let mut missing_rt = 0;
     for (i, (subset, &(start, end))) in subsets.iter().zip(bounds.iter()).enumerate() {
         let start = start as usize;
         let end = end as usize;
@@ -673,7 +695,13 @@ fn ttfl_spectra(
             log_skip("IT-TOF", stem, i, &"no clean RLE payload boundary");
             continue;
         };
-        let rt_ms = retention_time_ms.get(subset.entry_i).copied().unwrap_or(0);
+        let rt_ms = retention_time_ms
+            .get(subset.entry_i)
+            .copied()
+            .unwrap_or_else(|| {
+                missing_rt += 1;
+                0
+            });
         let idx = out.len();
         let id = i + 1;
         let mz = match calibration {
@@ -697,8 +725,7 @@ fn ttfl_spectra(
             native_id: format!("source={stem} start={id} end={id}"),
             ms_level: 1,
             // Neither polarity nor MS-level is recoverable per channel:
-            // the header's `u32[5]` mode flag was investigated and is not
-            // confirmed to map to a specific polarity/level assignment -
+            // the header's `u32[5]` mode flag is not confirmed to map to a specific polarity/level assignment -
             // see docs/format/06-known-limitations.md.
             polarity: None,
             scan_mode: Some(ScanMode::Profile),
@@ -722,6 +749,7 @@ fn ttfl_spectra(
     BuiltSpectra {
         spectra: out,
         skipped,
+        missing_rt,
     }
 }
 
@@ -872,6 +900,13 @@ impl SpectrumSource for Reader {
             }
         };
         self.skipped_scans = built.skipped;
+        if built.missing_rt > 0 {
+            log::warn!(
+                "openszraw: {}: {} spectra have no Retention Time record; their retention time is reported as 0",
+                self.stem,
+                built.missing_rt
+            );
+        }
         if built.skipped > 0 {
             log::warn!(
                 "openszraw: {}: skipped {} undecodable source scan(s); enable debug logging for details",

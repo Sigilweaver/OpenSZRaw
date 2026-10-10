@@ -44,6 +44,8 @@ fn main() {
     let mut failures: Vec<(String, String)> = Vec::new();
     let mut total_spectra = 0usize;
     let mut total_count = 0usize;
+    let mut malformed_rows = 0usize;
+    let mut total_skipped = 0usize;
 
     for line_result in lines {
         let line = line_result.expect("failed to read line");
@@ -52,6 +54,8 @@ fn main() {
         }
         let parts: Vec<&str> = line.split(',').collect();
         if parts.len() < 3 {
+            eprintln!("warning: skipping malformed index.csv row: {line}");
+            malformed_rows += 1;
             continue;
         }
         let accession = parts[1];
@@ -69,7 +73,13 @@ fn main() {
                     Ok(Ok(n)) => {
                         pass_count += 1;
                         total_spectra += n;
-                        println!("ok ({n} spectra)");
+                        let skipped = reader.skipped_scans();
+                        total_skipped += skipped;
+                        if skipped > 0 {
+                            println!("ok ({n} spectra, {skipped} source scans skipped)");
+                        } else {
+                            println!("ok ({n} spectra)");
+                        }
                     }
                     Ok(Err(e)) => {
                         fail_count += 1;
@@ -102,6 +112,10 @@ fn main() {
     println!("Passed: {pass_count}");
     println!("Failed: {fail_count}");
     println!("Total spectra decoded: {total_spectra}");
+    println!("Source scans skipped (passed files): {total_skipped}");
+    if malformed_rows > 0 {
+        println!("Malformed index.csv rows skipped: {malformed_rows}");
+    }
 
     if !failures.is_empty() {
         println!("\nFailures:");

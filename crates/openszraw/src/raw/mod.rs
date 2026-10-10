@@ -140,14 +140,25 @@ pub fn read_stream<F: Read + std::io::Seek>(
 
 /// Read a CFBF stream into memory if it exists, returning `None` rather
 /// than an error when it is absent (many streams are instrument/mode
-/// specific and legitimately missing).
+/// specific and legitimately missing). A stream that exists but cannot
+/// be opened or read also returns `None`, and is logged at `warn` level.
 pub fn read_stream_opt<F: Read + std::io::Seek>(
     comp: &mut CompoundFile<F>,
     path: &str,
 ) -> Option<Vec<u8>> {
-    let mut stream = comp.open_stream(path).ok()?;
+    let mut stream = match comp.open_stream(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            log::warn!("openszraw: cannot open stream '{path}': {e}");
+            return None;
+        }
+    };
     let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).ok()?;
+    if let Err(e) = stream.read_to_end(&mut buf) {
+        log::warn!("openszraw: cannot read stream '{path}': {e}");
+        return None;
+    }
     Some(buf)
 }
 

@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source index (GC-MS MRM: its transition slots, reserved from the
   header even when the payload is bad). `index` stays the dense output
   position. Output is unchanged for files with no skipped scans.
+- The reader no longer hides stream and metadata problems: an existing
+  CFBF stream that cannot be opened or read, a missing TTFL calibration
+  (raw index used as m/z), and spectra with no `Retention Time` record
+  (reported as 0) are logged at `warn`; an LC chromatogram stream that
+  does not decode is logged at `debug`. `corpus_scan` reports skipped
+  scans and malformed `index.csv` rows.
 
 ### Added
 
