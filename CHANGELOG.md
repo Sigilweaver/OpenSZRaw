@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the `log` crate, with one `warn` summary per call. Adds a `log`
   dependency.
 - Python `RawReader.skipped_scans` exposes the same count.
+- Corpus-backed tests find fixtures through `OPENSZRAW_CORPUS` (was a
+  hardcoded path) and fail instead of skipping when `REQUIRE_CORPUS=1`.
+  CI sets both for the GC-MS fixtures it downloads, verifies them by
+  sha256, and retries downloads (`curl -fsSL --retry 3`).
 - Committed `Cargo.lock`, plus `.cargo/config.toml` so lockfile updates
   stay within the MSRV.
 

@@ -77,9 +77,16 @@ tool output, vendor source, or values you learned by running vendor
 software. We'll investigate and fix it from public references. Detailed
 issue reports are genuinely useful and will be acted on.
 
-`/workspaces/Projects/Data` (or wherever the corpus lives in your checkout)
-holds real research data that can be expensive to redownload. Treat it as
-read-only except for adding cache/derived files you clearly own.
+The local corpus (see [CORPUS.md](CORPUS.md)) holds real research data
+that can be expensive to redownload. Treat it as read-only except for
+adding cache/derived files you clearly own.
+
+Point the tests at it with `OPENSZRAW_CORPUS` (the directory holding
+`index.csv` and one folder per accession). Corpus-backed tests skip when a
+fixture is missing; set `REQUIRE_CORPUS=1` to make a missing fixture fail
+instead:
+
+    OPENSZRAW_CORPUS=/path/to/SZRaw REQUIRE_CORPUS=1 cargo test --workspace
 
 ## Security
 

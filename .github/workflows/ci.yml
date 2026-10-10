@@ -3,14 +3,18 @@
 # Jobs:
 #   build - cargo fmt --check, cargo clippy -D warnings, cargo test
 #           (Linux + macOS + Windows, mirroring publish.yml's wheel matrix).
-#           Downloads two small PRIDE `.qgd` corpus fixtures ahead of
-#           `cargo test` so crates/openszraw/tests/conformance.rs exercises
-#           real decode paths for the GC-MS profile and MRM variants
-#           instead of always skipping - see Sigilweaver/OpenMassSpec#5.
+#           Downloads two small PRIDE `.qgd` corpus fixtures (sha256
+#           checked) ahead of `cargo test` so
+#           crates/openszraw/tests/conformance.rs exercises real decode
+#           paths for the GC-MS profile and MRM variants instead of always
+#           skipping - see Sigilweaver/OpenMassSpec#5. The `qgd_` tests
+#           then run again with REQUIRE_CORPUS=1, so a missing fixture
+#           fails the job instead of skipping.
 #   docs  - Docusaurus site build (docs/)
 #
 # All other conformance fixtures (the `.lcd` ones) still rely on the
-# out-of-tree corpus and continue to skip cleanly on CI.
+# out-of-tree corpus and skip on CI: CORPUS.md lists no small `.lcd`
+# fixture with a stable public per-file URL yet.
 
 name: CI
 
@@ -30,14 +34,19 @@ env:
   QGD_PROFILE_URL: >-
     https://ftp.pride.ebi.ac.uk/pride/data/archive/2022/02/PXD019638/L-B2-Br0-1.qgd
   QGD_PROFILE_NAME: PXD019638_L-B2-Br0-1.qgd
+  QGD_PROFILE_SHA256: 830b326b209a93fab22ced649b8214c8e770378a64bfc76b2d35163df570b6a5
   QGD_MRM_URL: >-
     https://ftp.pride.ebi.ac.uk/pride/data/archive/2022/08/PXD034978/49_27a__8122021_11.qgd
   QGD_MRM_NAME: PXD034978_49_27a__8122021_11.qgd
+  QGD_MRM_SHA256: b220a1de56c13ac5004b2fdbae9743553b1b4400a1a2aa29e08e5d88911530e1
 
 jobs:
   build:
     name: Build and test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      # Flat fixture dir; see crates/openszraw/tests/conformance.rs.
+      OPENSZRAW_CORPUS: ${{ github.workspace }}/corpus
     strategy:
       fail-fast: false
       matrix:
@@ -66,15 +75,26 @@ jobs:
         shell: bash
         run: |
           mkdir -p corpus
-          curl -sSL --user-agent "OpenSZRaw-CI/1.0" -o "corpus/$QGD_PROFILE_NAME" "$QGD_PROFILE_URL"
-          curl -sSL --user-agent "OpenSZRaw-CI/1.0" -o "corpus/$QGD_MRM_NAME" "$QGD_MRM_URL"
+          curl -fsSL --retry 3 --user-agent "OpenSZRaw-CI/1.0" -o "corpus/$QGD_PROFILE_NAME" "$QGD_PROFILE_URL"
+          curl -fsSL --retry 3 --user-agent "OpenSZRaw-CI/1.0" -o "corpus/$QGD_MRM_NAME" "$QGD_MRM_URL"
+          if command -v sha256sum >/dev/null; then sha=(sha256sum); else sha=(shasum -a 256); fi
+          printf '%s  %s\n' \
+            "$QGD_PROFILE_SHA256" "corpus/$QGD_PROFILE_NAME" \
+            "$QGD_MRM_SHA256" "corpus/$QGD_MRM_NAME" | "${sha[@]}" -c -
           du -sh "corpus/$QGD_PROFILE_NAME" "corpus/$QGD_MRM_NAME"
 
       - name: cargo test
         run: cargo test --workspace --all-targets
 
+      - name: GC-MS conformance (fixtures required)
+        env:
+          REQUIRE_CORPUS: "1"
+        run: cargo test -p openszraw --test conformance qgd_
+
       - name: Python binding parity
         if: matrix.os == 'ubuntu-latest'
+        env:
+          REQUIRE_CORPUS: "1"
         run: |
           python3 -m venv .venv
           .venv/bin/python -m pip install 'maturin>=1.5,<2' pytest

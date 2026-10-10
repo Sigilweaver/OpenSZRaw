@@ -3,8 +3,11 @@
 //! reporting pass/fail counts and per-format breakdowns. Run on demand:
 //!
 //! ```sh
-//! cargo run --example corpus_scan
+//! OPENSZRAW_CORPUS=/path/to/SZRaw cargo run --release --example corpus_scan
 //! ```
+//!
+//! `OPENSZRAW_CORPUS` points at the corpus root holding `index.csv` and
+//! one directory per accession (see `CORPUS.md`).
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -14,12 +17,18 @@ use openmassspec_core::conformance::assert_source_invariants;
 use openszraw::reader::Reader;
 
 fn main() {
-    let index_path = PathBuf::from("/workspaces/Projects/Data/SZRaw/index.csv");
-    let base_dir = PathBuf::from("/workspaces/Projects/Data/SZRaw");
+    let Some(base_dir) = std::env::var_os("OPENSZRAW_CORPUS")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+    else {
+        eprintln!("OPENSZRAW_CORPUS is not set - nothing to scan (corpus lives out of tree)");
+        return;
+    };
+    let index_path = base_dir.join("index.csv");
 
     if !index_path.exists() {
         eprintln!(
-            "corpus index not found at {} - nothing to scan (corpus lives out of tree)",
+            "corpus index not found at {} - nothing to scan",
             index_path.display()
         );
         return;

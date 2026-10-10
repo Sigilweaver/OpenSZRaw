@@ -1,15 +1,20 @@
 //! Conformance tests against real corpus fixtures, one per on-disk
-//! variant. Most of the corpus lives out of tree
-//! (`/workspaces/Projects/Data/SZRaw`) and is not checked into this repo,
-//! so these tests skip cleanly (rather than failing the build) when a
-//! fixture is absent.
+//! variant. The corpus lives out of tree and is not checked into this
+//! repo, so by default these tests skip cleanly (rather than failing the
+//! build) when a fixture is absent.
 //!
-//! The two `.qgd` GC-MS fixtures (`qgd_profile_fixture`/
-//! `qgd_mrm_fixture`) are the exception: `.github/workflows/ci.yml`'s
-//! `build` job downloads them into a repo-root, gitignored `corpus/`
-//! directory ahead of `cargo test`, so `qgd_profile_conformance` and
-//! `qgd_mrm_conformance` (plus the plausibility tests below them)
-//! exercise a real decode path in CI instead of always skipping - see
+//! Fixture lookup, first match wins, for a fixture `<ACCESSION>/<file>`:
+//!
+//! 1. `$OPENSZRAW_CORPUS/<ACCESSION>/<file>` (full local corpus layout,
+//!    see `CORPUS.md`)
+//! 2. `$OPENSZRAW_CORPUS/<ACCESSION>_<file>` (flat layout used by CI)
+//! 3. `<repo>/corpus/<ACCESSION>_<file>` (CI default when
+//!    `OPENSZRAW_CORPUS` is unset)
+//!
+//! Set `REQUIRE_CORPUS=1` to turn a missing fixture into a test failure
+//! instead of a skip. `.github/workflows/ci.yml` downloads the two `.qgd`
+//! GC-MS fixtures and runs the `qgd_` tests with `REQUIRE_CORPUS=1`, so a
+//! broken download fails CI instead of silently skipping - see
 //! Sigilweaver/OpenSZRaw#32.
 
 use openmassspec_core::conformance::assert_source_invariants;
@@ -17,10 +22,22 @@ use openmassspec_core::SpectrumSource;
 use openszraw::reader::Reader;
 use std::path::{Path, PathBuf};
 
-/// Picks the first candidate that exists on disk, falling back to the
-/// first candidate (so `open_or_skip`'s exists-check still reports a
-/// sensible path when none are present).
-fn pick_fixture(candidates: &[PathBuf]) -> PathBuf {
+/// Resolve `<accession>/<file>` against the lookup order in the module
+/// doc comment. Falls back to the first candidate so `open_or_skip`
+/// still reports a sensible path when none exist.
+fn fixture(accession: &str, file: &str) -> PathBuf {
+    let flat = format!("{accession}_{file}");
+    let mut candidates = Vec::new();
+    if let Some(root) = std::env::var_os("OPENSZRAW_CORPUS").filter(|v| !v.is_empty()) {
+        let root = PathBuf::from(root);
+        candidates.push(root.join(accession).join(file));
+        candidates.push(root.join(&flat));
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus")
+            .join(&flat),
+    );
     candidates
         .iter()
         .find(|p| p.exists())
@@ -29,30 +46,19 @@ fn pick_fixture(candidates: &[PathBuf]) -> PathBuf {
 }
 
 fn qgd_profile_fixture() -> PathBuf {
-    pick_fixture(&[
-        // CI / repo-root corpus dir (gitignored; populated by
-        // ci.yml's "Download corpus fixtures for conformance tests"
-        // step). This is the one CI actually uses.
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/PXD019638_L-B2-Br0-1.qgd"),
-        // Local dev setups with the full out-of-tree corpus checked out.
-        PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD019638/L-B2-Br0-1.qgd"),
-    ])
+    fixture("PXD019638", "L-B2-Br0-1.qgd")
 }
 
 fn qgd_mrm_fixture() -> PathBuf {
-    pick_fixture(&[
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../corpus/PXD034978_49_27a__8122021_11.qgd"),
-        PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD034978/49_27a__8122021_11.qgd"),
-    ])
+    fixture("PXD034978", "49_27a__8122021_11.qgd")
 }
 
 fn qtfl_fixture() -> PathBuf {
-    PathBuf::from("/workspaces/Projects/Data/SZRaw/MSV000084197/20190607_NM16.lcd")
+    fixture("MSV000084197", "20190607_NM16.lcd")
 }
 
 fn ttfl_fixture() -> PathBuf {
-    PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD020792/UY02-01-01p400.LCD")
+    fixture("PXD020792", "UY02-01-01p400.LCD")
 }
 
 /// Same file as `ttfl_fixture`; `PXD020792` is also where
@@ -70,15 +76,24 @@ fn ttfl_lc_chromatogram_fixture() -> PathBuf {
 /// 64-byte `Data Index` block) and an odd RT-point count, producing a
 /// trailing 32-byte partial block.
 fn ttfl_partial_block_fixture() -> PathBuf {
-    PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD025121/17.lcd")
+    fixture("PXD025121", "17.lcd")
 }
 
 fn single_quad_fixture() -> PathBuf {
-    PathBuf::from("/workspaces/Projects/Data/SZRaw/MTBLS1960/E1.lcd")
+    fixture("MTBLS1960", "E1.lcd")
+}
+
+fn corpus_required() -> bool {
+    std::env::var("REQUIRE_CORPUS").is_ok_and(|v| v == "1")
 }
 
 fn open_or_skip(path: &Path) -> Option<Reader> {
     if !path.exists() {
+        assert!(
+            !corpus_required(),
+            "REQUIRE_CORPUS=1 but fixture is missing: {} (set OPENSZRAW_CORPUS)",
+            path.display()
+        );
         eprintln!("skip: corpus not present at {}", path.display());
         return None;
     }

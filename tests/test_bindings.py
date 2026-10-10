@@ -12,6 +12,8 @@ import pytest
 def test_decoded_fields():
     path = Path(os.environ.get("OPENSZRAW_TEST_FILE", "corpus/PXD034978_49_27a__8122021_11.qgd"))
     if not path.is_file():
+        if os.environ.get("REQUIRE_CORPUS") == "1":
+            pytest.fail(f"REQUIRE_CORPUS=1 but test file is missing: {path}")
         pytest.skip("set OPENSZRAW_TEST_FILE to a QGD or LCD file")
     reader = openszraw.RawReader(str(path))
     run = reader.run_info()
