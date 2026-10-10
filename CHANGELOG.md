@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `.qgd` run metadata now pairs `MS:1000560` with its exact PSI-MS name,
+  "mass spectrometer file format", instead of the made-up name
+  "Shimadzu GCMSsolution QGD format". mzML validators reject an accession
+  with a mismatched name. psi-ms.obo has no `.qgd`-specific term. A unit
+  test now checks every emitted CV term name against the OBO.
+
 ## [0.2.0] - 2026-09-28
 
 ### Added

@@ -630,12 +630,14 @@ impl SpectrumSource for Reader {
                 extra: ::std::collections::BTreeMap::new(),
                 source_file_name: format!("{}.qgd", self.stem),
                 // No dedicated PSI-MS CV term for GCMSsolution's .qgd
-                // format was found in psi-ms.obo; fall back to the
-                // generic "mass spectrometer file format" node with a
-                // descriptive name, matching how other vendor crates in
-                // this suite handle CV gaps (e.g. openaraw's generic
-                // Agilent instrument fallback).
-                source_file_format: CvTerm::new("MS:1000560", "Shimadzu GCMSsolution QGD format"),
+                // format exists in psi-ms.obo (checked against
+                // data-version 4.1.249: the only Shimadzu file-format
+                // child of MS:1000560 is MS:1003009 "Shimadzu Biotech LCD
+                // format", which is `.lcd`-specific). Fall back to the
+                // generic parent node itself, with its exact OBO name -
+                // mzML validators reject an accession paired with any
+                // other name.
+                source_file_format: CvTerm::new("MS:1000560", "mass spectrometer file format"),
                 native_id_format: CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
                 instrument: CvTerm::new("MS:1000124", "Shimadzu instrument model"),
                 instrument_serial_number: None,
@@ -807,6 +809,50 @@ impl SpectrumSource for Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exact `name:` lines from PSI-MS `psi-ms.obo` (data-version 4.1.249)
+    /// for every accession this crate emits. mzML validators reject an
+    /// accession paired with any other name, so the pair must match the
+    /// OBO byte for byte.
+    const PSI_MS_NAMES: &[(&str, &str)] = &[
+        ("MS:1000124", "Shimadzu instrument model"),
+        ("MS:1000560", "mass spectrometer file format"),
+        ("MS:1000604", "LCMS-IT-TOF"),
+        ("MS:1000811", "electromagnetic radiation chromatogram"),
+        ("MS:1000929", "Shimadzu Biotech nativeID format"),
+        ("MS:1002898", "Shimadzu Biotech QTOF nativeID format"),
+        ("MS:1002998", "LCMS-9030"),
+        ("MS:1003009", "Shimadzu Biotech LCD format"),
+    ];
+
+    /// Pulls every `CvTerm::new("MS:...", "...")` pair out of this
+    /// file's own source and checks it against `PSI_MS_NAMES`, so a new
+    /// or edited term cannot drift from the OBO without failing here.
+    #[test]
+    fn every_cv_term_name_matches_psi_ms_obo() {
+        let src = include_str!("reader.rs");
+        let needle = concat!("CvTerm::", "new(");
+        let mut seen = 0;
+        for chunk in src.split(needle).skip(1) {
+            let mut lits = chunk.split('"').skip(1).step_by(2);
+            let (Some(acc), Some(name)) = (lits.next(), lits.next()) else {
+                continue;
+            };
+            let is_accession = acc
+                .strip_prefix("MS:")
+                .is_some_and(|d| d.len() == 7 && d.bytes().all(|b| b.is_ascii_digit()));
+            if !is_accession {
+                continue;
+            }
+            seen += 1;
+            let expected = PSI_MS_NAMES
+                .iter()
+                .find(|(a, _)| *a == acc)
+                .unwrap_or_else(|| panic!("{acc} not in PSI_MS_NAMES; add it from psi-ms.obo"));
+            assert_eq!(name, expected.1, "wrong OBO name for {acc}");
+        }
+        assert!(seen >= 10, "expected to find the CvTerm uses, saw {seen}");
+    }
 
     #[test]
     fn qtfl_ms2_links_to_ms1_from_matching_cycle() {

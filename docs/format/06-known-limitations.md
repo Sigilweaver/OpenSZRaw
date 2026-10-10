@@ -149,8 +149,9 @@ decoded field, so it is left unpopulated rather than assumed.
 Similarly, no PSI-MS CV term dedicated to the `.qgd` file format itself
 exists in `psi-ms.obo` (unlike `.lcd`, which has `MS:1003009` "Shimadzu
 Biotech LCD format"), so `RunMetadata::source_file_format` falls back to
-the generic `MS:1000560` "mass spectrometer file format" node with a
-descriptive name. `RunMetadata::instrument` likewise stays at the
+the generic `MS:1000560` "mass spectrometer file format" node, using
+that node's exact OBO name (validators reject an accession paired with
+any other name). `RunMetadata::instrument` likewise stays at the
 generic `MS:1000124` "Shimadzu instrument model" for all `.qgd` files,
 since no per-file instrument-model string was found decoded anywhere in
 the corpus (per-spectrum `Analyzer::SQMS` vs `Analyzer::TQMS` is
