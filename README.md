@@ -18,6 +18,15 @@ MRM/targeted) and `.lcd` LC-MS across IT-TOF (profile) and QTOF
 
 Documentation: [sigilweaver.app/openszraw/docs](https://sigilweaver.app/openszraw/docs)
 
+## Known issues
+
+- IT-TOF `.lcd`: every spectrum is labelled MS1 with no polarity,
+  including MS2 channels.
+- LC-MS/MS triple quadrupole `.lcd` (LCMS-8040/8050/8060) is not
+  supported; `Reader::open` refuses these files.
+- A small number of QTOF scans fail to decode; each failure is logged and
+  counted by `Reader::skipped_scans()`.
+
 ## Install
 
 **Prefer [`openmassspec-io`](https://github.com/Sigilweaver/OpenMassSpec)
