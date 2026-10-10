@@ -76,6 +76,40 @@ pub fn parse_spectrum_index(data: &[u8]) -> crate::Result<Vec<u64>> {
     }
 }
 
+/// Map a Variant A (profile) header `Format` code (offset 0x14) to its
+/// per-peak intensity byte width. Each record is `[mz: u16 * 10]`
+/// followed by a little-endian unsigned intensity of this width.
+///
+/// Verified against the local corpus by summing decoded intensities and
+/// comparing with the file's own `GCMS Raw Data/TIC Data` (`u64` per scan):
+///
+/// - `2` -> 2 bytes: the original documented case (PXD019638).
+/// - `3` -> 3 bytes: 1,320 scans in `PXD019638/L-B2-Br0-1.qgd` and 4,602
+///   in `MTBLS11411/240403_10_Control 2.qgd`, all matching `TIC Data`
+///   exactly. Previously skipped.
+/// - `1` -> 4 bytes: 130 scans across 4 `MTBLS11411` files, all on
+///   high-abundance ions. These match `TIC Data` exactly only once bit 31
+///   is cleared (see [`PROFILE_U32_VALUE_MASK`]). Previously skipped.
+///
+/// `0` is the Variant B (MRM) layout, which keeps these header slots
+/// zero; any other code is unknown and returns `None`.
+fn profile_intensity_width(format: u16) -> Option<usize> {
+    match format {
+        2 => Some(2),
+        3 => Some(3),
+        1 => Some(4),
+        _ => None,
+    }
+}
+
+/// Bit 31 of a 4-byte profile intensity is a flag, not magnitude: the
+/// instrument's own `TIC Data` equals the sum of the low 31 bits for every
+/// 4-byte scan in the corpus (130 of 130). The flagged peaks sit on the
+/// most intense ions of each scan, consistent with a saturation marker,
+/// but its meaning is not confirmed, so it is dropped rather than
+/// surfaced.
+const PROFILE_U32_VALUE_MASK: u32 = 0x7FFF_FFFF;
+
 /// Parse one scan from `MS Raw Data` given its full byte range (32-byte
 /// header + payload, bounded by consecutive `Spectrum Index` offsets).
 ///
@@ -98,23 +132,31 @@ pub fn parse_scan(scan_bytes: &[u8]) -> crate::Result<QgdScan> {
     let payload = &scan_bytes[SCAN_HEADER_SIZE..];
     let data_bytes = payload.len();
 
-    // Variant A: Format==2 at 0x14 and the declared peak count exactly
-    // accounts for the payload size (32-byte header + N_Peaks*4 bytes).
-    if format_a == 2 && data_bytes == n_peaks_a as usize * 4 {
+    // Variant A: the `Format` code at 0x14 selects the per-peak
+    // intensity width, and the declared peak count must exactly account
+    // for the payload (32-byte header + N_Peaks * (2 + width) bytes).
+    if let Some(width) = profile_intensity_width(format_a) {
         let n = n_peaks_a as usize;
-        let mut mz = Vec::with_capacity(n);
-        let mut intensity = Vec::with_capacity(n);
-        for i in 0..n {
-            let raw_mz = LittleEndian::read_u16(&payload[i * 4..i * 4 + 2]);
-            let raw_intensity = LittleEndian::read_u16(&payload[i * 4 + 2..i * 4 + 4]);
-            mz.push(raw_mz as f64 / 10.0);
-            intensity.push(raw_intensity as f32);
+        let record_size = 2 + width;
+        if data_bytes == n * record_size {
+            let mut mz = Vec::with_capacity(n);
+            let mut intensity = Vec::with_capacity(n);
+            for i in 0..n {
+                let base = i * record_size;
+                let raw_mz = LittleEndian::read_u16(&payload[base..base + 2]);
+                let mut raw_intensity = read_uint_le(&payload[base + 2..base + record_size]);
+                if width == 4 {
+                    raw_intensity &= PROFILE_U32_VALUE_MASK;
+                }
+                mz.push(raw_mz as f64 / 10.0);
+                intensity.push(raw_intensity as f32);
+            }
+            return Ok(QgdScan::Profile {
+                retention_time_ms,
+                mz,
+                intensity,
+            });
         }
-        return Ok(QgdScan::Profile {
-            retention_time_ms,
-            mz,
-            intensity,
-        });
     }
 
     // Variant B: MRM/targeted mode. The header's own transition count
@@ -189,6 +231,61 @@ mod tests {
             }
             QgdScan::Mrm { .. } => panic!("expected Profile"),
         }
+    }
+
+    /// Builds a Variant A profile scan with the given `Format` code and
+    /// pre-encoded `(raw_mz, intensity_bytes)` peak records.
+    fn profile_scan(format: u16, peaks: &[(u16, &[u8])]) -> Vec<u8> {
+        let mut buf = vec![0u8; SCAN_HEADER_SIZE];
+        LittleEndian::write_u32(&mut buf[0x04..0x08], 1234);
+        LittleEndian::write_u16(&mut buf[0x14..0x16], format);
+        LittleEndian::write_u16(&mut buf[0x16..0x18], peaks.len() as u16);
+        for (mz, inten) in peaks {
+            buf.extend_from_slice(&mz.to_le_bytes());
+            buf.extend_from_slice(inten);
+        }
+        buf
+    }
+
+    fn profile_intensities(buf: &[u8]) -> Vec<f32> {
+        match parse_scan(buf).expect("parse") {
+            QgdScan::Profile { intensity, .. } => intensity,
+            QgdScan::Mrm { .. } => panic!("expected Profile"),
+        }
+    }
+
+    #[test]
+    fn profile_scan_accepts_2_3_and_4_byte_intensities() {
+        let buf = profile_scan(2, &[(1000, &[0x34, 0x12]), (1020, &[1, 0])]);
+        assert_eq!(profile_intensities(&buf), vec![4660.0, 1.0]);
+
+        // Format 3: 3-byte intensity (seen in PXD019638 and MTBLS11411).
+        let buf = profile_scan(3, &[(1000, &[0x34, 0x12, 0x03]), (1020, &[0, 0, 1])]);
+        assert_eq!(profile_intensities(&buf), vec![201268.0, 65536.0]);
+
+        // Format 1: 4-byte intensity with bit 31 cleared (MTBLS11411).
+        let buf = profile_scan(
+            1,
+            &[
+                (2002, &0x8062_C812u32.to_le_bytes()),
+                (3484, &70_000u32.to_le_bytes()),
+            ],
+        );
+        assert_eq!(
+            profile_intensities(&buf),
+            vec![0x0062_C812 as f32, 70_000.0]
+        );
+    }
+
+    #[test]
+    fn profile_scan_rejects_width_that_disagrees_with_format() {
+        // Format 3 declares 3-byte intensities, but the payload is sized
+        // for 2-byte records: must not decode as a profile scan.
+        let buf = profile_scan(3, &[(1000, &[1, 0]), (1020, &[2, 0])]);
+        assert!(parse_scan(&buf).is_err());
+        // Unknown format code.
+        let buf = profile_scan(7, &[(1000, &[1, 0, 0, 0, 0, 0, 0])]);
+        assert!(parse_scan(&buf).is_err());
     }
 
     #[test]

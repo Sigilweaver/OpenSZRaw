@@ -91,3 +91,27 @@ fit in one scan's dwell cycle, not a decode error. Each scan's
 transitions are decoded independently per the layout above; no
 assumption is made that a given transition slot maps to the same
 (precursor, product) across scans.
+
+## Addendum (2026-10-09): Variant A `Format` selects the intensity width
+
+The Variant A `Format` field at `0x14` is not a constant `2`. It is a
+per-scan code for the intensity byte width, and a single file mixes
+codes from scan to scan (higher codes appear on the more intense scans):
+
+| `Format` | Intensity width | Record size | Seen in |
+|---|---|---|---|
+| `2` | 2 bytes | 4 | PXD019638 |
+| `3` | 3 bytes | 5 | PXD019638, MTBLS11411 |
+| `1` | 4 bytes, bit 31 is a flag | 6 | MTBLS11411 |
+
+Evidence: summing decoded intensities reproduces the file's own
+`GCMS Raw Data/TIC Data` stream (one `u64` per scan) for all 391,625
+profile scans in the local corpus (47 `.qgd` files). For the `1` code
+this holds only once bit 31 is cleared; the flagged values sit on the
+most intense ions, consistent with a saturation marker (compare the
+`0x807FB314`-style MRM values noted above), but the meaning is not
+confirmed, so the reader drops the bit.
+
+Before this, `parse_scan` accepted only `Format == 2` and skipped
+59,403 of 2,454,605 `.qgd` scans corpus-wide (PXD019638: 36,238;
+MTBLS11411: 23,165). After: 0 skipped.

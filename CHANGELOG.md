@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Shimadzu GCMSsolution QGD format". mzML validators reject an accession
   with a mismatched name. psi-ms.obo has no `.qgd`-specific term. A unit
   test now checks every emitted CV term name against the OBO.
+- GC-MS full-scan profile scans with 3- or 4-byte intensities are now
+  decoded instead of skipped. The header `Format` code selects the width
+  (`2` -> 2 bytes, `3` -> 3 bytes, `1` -> 4 bytes with bit 31 masked).
+  Decoded sums match the file's own TIC for all 391,625 profile scans in
+  the local corpus. Previously 59,403 scans across PXD019638 and
+  MTBLS11411 were dropped.
 
 ## [0.2.0] - 2026-09-28
 
