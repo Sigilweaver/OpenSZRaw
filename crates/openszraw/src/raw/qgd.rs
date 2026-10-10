@@ -56,7 +56,7 @@ impl QgdScan {
 /// first is unambiguous.
 pub fn parse_spectrum_index(data: &[u8]) -> crate::Result<Vec<u64>> {
     let size = data.len();
-    if size % 4 == 0 {
+    if size.is_multiple_of(4) {
         Ok(super::parse_u32_array(data)
             .into_iter()
             .map(u64::from)
@@ -189,7 +189,7 @@ pub fn parse_scan(scan_bytes: &[u8]) -> crate::Result<QgdScan> {
     // per-event width table). A transition record is
     // `[precursor_mz: u16 *10][product_mz: u16 *10][intensity: LE uint,
     // 2/3/4 bytes]`.
-    if n_transitions_b > 0 && data_bytes % n_transitions_b as usize == 0 {
+    if n_transitions_b > 0 && data_bytes.is_multiple_of(n_transitions_b as usize) {
         let record_size = data_bytes / n_transitions_b as usize;
         if record_size > 4 {
             let width = record_size - 4;

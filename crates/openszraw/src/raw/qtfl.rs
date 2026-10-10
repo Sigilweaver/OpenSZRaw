@@ -47,7 +47,7 @@ pub struct CentroidIndexRecord {
 }
 
 pub fn parse_centroid_index(data: &[u8]) -> crate::Result<Vec<CentroidIndexRecord>> {
-    if data.len() % INDEX_RECORD_SIZE != 0 {
+    if !data.len().is_multiple_of(INDEX_RECORD_SIZE) {
         return Err(crate::Error::Parse(format!(
             "Centroid Index stream size {} is not a multiple of {INDEX_RECORD_SIZE}",
             data.len()
@@ -72,7 +72,7 @@ pub fn parse_centroid_index(data: &[u8]) -> crate::Result<Vec<CentroidIndexRecor
 /// Parse the `Retention Time` stream into `rt_ms` values, one per scan, in
 /// stream order (position `i` corresponds to `Centroid Index` record `i`).
 pub fn parse_retention_time(data: &[u8]) -> crate::Result<Vec<u32>> {
-    if data.len() % RT_RECORD_SIZE != 0 {
+    if !data.len().is_multiple_of(RT_RECORD_SIZE) {
         return Err(crate::Error::Parse(format!(
             "Retention Time stream size {} is not a multiple of {RT_RECORD_SIZE}",
             data.len()
@@ -149,7 +149,7 @@ pub fn decode_scan(scan_bytes: &[u8]) -> crate::Result<QtflSpectrum> {
         )));
     }
     let record_size = 8 + intensity_width;
-    if payload_size % record_size != 0 {
+    if !payload_size.is_multiple_of(record_size) {
         return Err(crate::Error::Parse(format!(
             "QTOF centroid payload size {payload_size} is not a multiple of {record_size} (8-byte mz + {intensity_width}-byte intensity)"
         )));

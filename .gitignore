@@ -6,7 +6,6 @@ re/
 
 # Rust build artifacts
 /target/
-**/Cargo.lock
 
 # Editor / OS
 .DS_Store
@@ -15,4 +14,7 @@ re/
 .idea/
 venv/
 .venv/
-Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]

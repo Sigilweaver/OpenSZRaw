@@ -59,7 +59,7 @@ pub struct DataIndexSubset {
 pub fn parse_data_index(data: &[u8]) -> crate::Result<Vec<DataIndexSubset>> {
     let n_full_blocks = data.len() / DATA_INDEX_ENTRY_SIZE;
     let remainder = data.len() % DATA_INDEX_ENTRY_SIZE;
-    if remainder != 0 && remainder % SUBSET_SIZE != 0 {
+    if remainder != 0 && !remainder.is_multiple_of(SUBSET_SIZE) {
         return Err(crate::Error::Parse(format!(
             "Data Index stream size {} is not a whole number of {SUBSET_SIZE}-byte subsets",
             data.len()
@@ -201,7 +201,7 @@ fn find_prefix_end(payload: &[u8]) -> Option<usize> {
 fn prefix_end_with_work(payload: &[u8]) -> (Option<usize>, usize) {
     // Every candidate tail starts on an even byte offset, so its length
     // is even only when the whole payload's is.
-    if payload.len() < 4 || payload.len() % 2 != 0 {
+    if payload.len() < 4 || !payload.len().is_multiple_of(2) {
         return (None, 0);
     }
     let words = to_u16_words(payload);
@@ -437,7 +437,7 @@ pub fn decode_scan(scan_bytes: &[u8]) -> Option<TtflSpectrum> {
     }
     let prefix_end = find_prefix_end(payload)?;
     let tail = &payload[prefix_end..];
-    if tail.len() % 2 != 0 {
+    if !tail.len().is_multiple_of(2) {
         return None;
     }
     let words = to_u16_words(tail);
@@ -571,7 +571,7 @@ mod tests {
         while i + 1 < payload.len() {
             if payload[i + 1] == 0x80 && payload[i] as u16 <= PREFIX_SEARCH_MAX_RUN_LEN {
                 let tail = &payload[i..];
-                if tail.len() % 2 == 0 {
+                if tail.len().is_multiple_of(2) {
                     let words = to_u16_words(tail);
                     if let Some((_, end)) = decode_rle(&words, 0, DECODE_MAX_RUN_LEN) {
                         if end == words.len() {
@@ -614,7 +614,7 @@ mod tests {
                 };
                 payload.extend_from_slice(&w.to_le_bytes());
             }
-            if rng.next() % 8 == 0 {
+            if rng.next().is_multiple_of(8) {
                 payload.push(rng.next() as u8); // odd length
             }
             let fast = find_prefix_end(&payload);

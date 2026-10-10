@@ -36,6 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `iter_spectra` call left out. Each skip is logged at `debug` level
   through the `log` crate, with one `warn` summary per call. Adds a `log`
   dependency.
+- Python `RawReader.skipped_scans` exposes the same count.
+- Committed `Cargo.lock`, plus `.cargo/config.toml` so lockfile updates
+  stay within the MSRV.
+
+### Changed
+
+- **Breaking (pre-1.0):** `openszraw::Error` is now `#[non_exhaustive]`.
+  Exhaustive `match`es on it need a wildcard arm. This lets later
+  releases add error variants without another breaking change.
+- Python `RawReader.read_spectrum` raises `IndexError` (was
+  `RuntimeError`) for an out-of-range scan index.
+- MSRV raised from 1.85 to 1.88, matching `openmassspec-core` 2.0.0,
+  which already required 1.88.
 
 ## [0.2.0] - 2026-09-28
 

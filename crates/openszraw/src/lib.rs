@@ -35,7 +35,11 @@ pub mod reader;
 
 pub use reader::Reader;
 
+/// Errors returned by this crate. Marked `#[non_exhaustive]` so new
+/// variants can be added without a breaking change; match with a
+/// wildcard arm.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

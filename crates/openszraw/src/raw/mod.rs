@@ -109,8 +109,10 @@ pub fn detect_variant<F: Read + std::io::Seek>(
 /// `Retention Time` stream, or a `Spectrum Index` holding absolute byte
 /// offsets). Trailing bytes that do not fill a whole `u32` are ignored.
 pub fn parse_u32_array(data: &[u8]) -> Vec<u32> {
-    data.chunks_exact(4)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+    data.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| u32::from_le_bytes(*c))
         .collect()
 }
 

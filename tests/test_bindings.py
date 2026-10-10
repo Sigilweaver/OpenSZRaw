@@ -20,6 +20,9 @@ def test_decoded_fields():
     assert reader.variant in {"qgd", "qtfl", "ttfl", "singlequad"}
     assert reader.calibration() is None or isinstance(reader.calibration()["a"], float)
     assert reader.scan_index()
+    assert reader.skipped_scans >= 0
+    with pytest.raises(IndexError):
+        reader.read_spectrum(reader.scan_count)
     first = reader.read_spectrum(0)
     streamed = next(openszraw.iter_spectra(str(path)))
     assert first.native_id == streamed.native_id

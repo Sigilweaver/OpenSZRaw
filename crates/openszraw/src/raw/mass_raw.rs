@@ -58,7 +58,7 @@ pub fn parse_scan(scan_bytes: &[u8]) -> crate::Result<SingleQuadScan> {
     let payload = &scan_bytes[SCAN_HEADER_SIZE..];
     let payload_size = payload.len();
 
-    if n_peaks == 0 || payload_size % n_peaks != 0 {
+    if n_peaks == 0 || !payload_size.is_multiple_of(n_peaks) {
         return Err(crate::Error::Parse(format!(
             "single-quad scan payload size {payload_size} not evenly divisible by peak count {n_peaks}"
         )));
