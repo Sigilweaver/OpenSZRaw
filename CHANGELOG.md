@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Decoded sums match the file's own TIC for all 391,625 profile scans in
   the local corpus. Previously 59,403 scans across PXD019638 and
   MTBLS11411 were dropped.
+- IT-TOF RLE prefix search is now linear time. A crafted 64 KB scan
+  payload took about 6 s to reject (quadratic search); it now takes
+  under 1 ms. Results are unchanged (checked against the old search by a
+  randomized test).
 
 ## [0.2.0] - 2026-09-28
 

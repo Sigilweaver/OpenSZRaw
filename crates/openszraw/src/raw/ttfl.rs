@@ -178,36 +178,58 @@ fn to_u16_words(bytes: &[u8]) -> Vec<u16> {
 }
 
 /// Find the byte offset within `payload` where the fixed-size
-/// scan-metadata prefix ends and the RLE-encoded profile data begins, by
-/// trying every 2-byte-aligned candidate marker position and requiring
-/// the decode to consume the entire remainder of the payload with zero
-/// leftover bytes. Ports `ttfl_rle_decode.py::find_prefix_end` exactly
-/// (including its `max_run_len=64` bound on the candidate marker word
-/// itself).
+/// scan-metadata prefix ends and the RLE-encoded profile data begins:
+/// the first 2-byte-aligned candidate marker position (a word in
+/// `0x8000..=0x8000 + PREFIX_SEARCH_MAX_RUN_LEN`) from which the RLE
+/// decode consumes the entire remainder of the payload with zero
+/// leftover bytes. Same result as
+/// `ttfl_rle_decode.py::find_prefix_end`, including its `max_run_len=64`
+/// bound on the candidate marker word itself.
+///
+/// Linear time. Decoding from a word index is deterministic and only
+/// ever jumps forward (marker -> past its run, terminator -> stop), so
+/// whether a clean decode starts at index `k` depends only on whether one
+/// starts at the index it jumps to. One backward pass fills that table
+/// for every `k`; the naive "try every candidate and decode to the end"
+/// search is quadratic and took ~0.7 s on a crafted 64 KB payload.
 fn find_prefix_end(payload: &[u8]) -> Option<usize> {
-    if payload.len() < 4 {
-        return None;
+    prefix_end_with_work(payload).0
+}
+
+/// [`find_prefix_end`], also returning the number of inner-loop steps
+/// taken so tests can assert the bound is linear in `payload.len()`.
+fn prefix_end_with_work(payload: &[u8]) -> (Option<usize>, usize) {
+    // Every candidate tail starts on an even byte offset, so its length
+    // is even only when the whole payload's is.
+    if payload.len() < 4 || payload.len() % 2 != 0 {
+        return (None, 0);
     }
-    let mut i = 0;
-    while i + 1 < payload.len() {
-        if payload[i + 1] == 0x80 {
-            let n = payload[i] as u16;
-            if n <= PREFIX_SEARCH_MAX_RUN_LEN {
-                let tail = &payload[i..];
-                if tail.len() % 2 == 0 {
-                    let words = to_u16_words(tail);
-                    let nwords = words.len();
-                    if let Some((_, end_idx)) = decode_rle(&words, 0, DECODE_MAX_RUN_LEN) {
-                        if end_idx == nwords {
-                            return Some(i);
-                        }
-                    }
-                }
-            }
+    let words = to_u16_words(payload);
+    let n = words.len();
+    let mut work = 0usize;
+    // clean[k]: decoding from word k ends on a terminator that is the
+    // last word. clean[n] (ran off the end) is false.
+    let mut clean = vec![false; n + 1];
+    for k in (0..n).rev() {
+        work += 1;
+        let w = words[k];
+        clean[k] = if w == RLE_MARKER_BASE {
+            k + 1 == n
+        } else if w > RLE_MARKER_BASE && w <= RLE_MARKER_BASE + DECODE_MAX_RUN_LEN {
+            let next = k + 2 + (w - RLE_MARKER_BASE) as usize;
+            next <= n && clean[next]
+        } else {
+            false
+        };
+    }
+    for (k, &w) in words.iter().enumerate() {
+        work += 1;
+        if (RLE_MARKER_BASE..=RLE_MARKER_BASE + PREFIX_SEARCH_MAX_RUN_LEN).contains(&w) && clean[k]
+        {
+            return (Some(k * 2), work);
         }
-        i += 2;
     }
-    None
+    (None, work)
 }
 
 /// One decoded IT-TOF spectrum: a sparse set of (raw time-bin index,
@@ -537,6 +559,96 @@ mod tests {
         let mut scan = vec![0u8; SCAN_HEADER_SIZE];
         scan.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
         assert!(decode_scan(&scan).is_none());
+    }
+
+    /// The original quadratic search, kept as a reference to check the
+    /// linear one against.
+    fn find_prefix_end_naive(payload: &[u8]) -> Option<usize> {
+        if payload.len() < 4 {
+            return None;
+        }
+        let mut i = 0;
+        while i + 1 < payload.len() {
+            if payload[i + 1] == 0x80 && payload[i] as u16 <= PREFIX_SEARCH_MAX_RUN_LEN {
+                let tail = &payload[i..];
+                if tail.len() % 2 == 0 {
+                    let words = to_u16_words(tail);
+                    if let Some((_, end)) = decode_rle(&words, 0, DECODE_MAX_RUN_LEN) {
+                        if end == words.len() {
+                            return Some(i);
+                        }
+                    }
+                }
+            }
+            i += 2;
+        }
+        None
+    }
+
+    /// Small deterministic PRNG (no `rand` dependency).
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u32 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (self.0 >> 33) as u32
+        }
+    }
+
+    #[test]
+    fn find_prefix_end_matches_naive_search() {
+        let mut rng = Lcg(42);
+        let mut found = 0;
+        for _ in 0..20_000 {
+            let n_words = 2 + (rng.next() % 24) as usize;
+            let mut payload = Vec::with_capacity(n_words * 2 + 1);
+            for _ in 0..n_words {
+                // Bias toward marker-like words so valid decodes occur.
+                let w: u16 = match rng.next() % 4 {
+                    0 => 0x8000,
+                    1 => 0x8000 + (rng.next() % 4) as u16,
+                    2 => 0x8000 + (rng.next() % 80) as u16,
+                    _ => rng.next() as u16,
+                };
+                payload.extend_from_slice(&w.to_le_bytes());
+            }
+            if rng.next() % 8 == 0 {
+                payload.push(rng.next() as u8); // odd length
+            }
+            let fast = find_prefix_end(&payload);
+            assert_eq!(fast, find_prefix_end_naive(&payload), "{payload:?}");
+            found += fast.is_some() as usize;
+        }
+        assert!(found > 100, "fuzz produced too few valid decodes: {found}");
+    }
+
+    /// 64 KB of back-to-back 1-value runs with no terminator: every one
+    /// of the ~10,900 candidate markers decodes to the end of the buffer
+    /// before failing, which is the naive search's quadratic worst case.
+    #[test]
+    fn find_prefix_end_is_linear_on_adversarial_payload() {
+        let mut payload = Vec::with_capacity(64 * 1024);
+        while payload.len() + 6 <= 64 * 1024 {
+            payload.extend_from_slice(&0x8001u16.to_le_bytes());
+            payload.extend_from_slice(&0x8001u16.to_le_bytes()); // skip
+            payload.extend_from_slice(&0x8001u16.to_le_bytes()); // value
+        }
+        let started = std::time::Instant::now();
+        let (result, work) = prefix_end_with_work(&payload);
+        let elapsed = started.elapsed();
+        assert_eq!(result, None);
+        assert!(
+            work <= payload.len(),
+            "work {work} not linear in payload length {}",
+            payload.len()
+        );
+        assert!(elapsed.as_secs_f64() < 0.5, "took {elapsed:?}");
+
+        // Adding a terminator makes the very first marker a clean decode.
+        payload.extend_from_slice(&0x8000u16.to_le_bytes());
+        assert_eq!(prefix_end_with_work(&payload).0, Some(0));
     }
 
     /// Builds a synthetic `TTFL Tuning/Tuning Result NN` stream with the
