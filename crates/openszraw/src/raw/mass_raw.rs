@@ -5,6 +5,8 @@
 
 use byteorder::{ByteOrder, LittleEndian};
 
+use super::read_uint_le;
+
 /// Fixed size of each `MS Raw Data` scan's header, before the variable-
 /// length peak payload.
 pub const SCAN_HEADER_SIZE: usize = 64;
@@ -21,17 +23,12 @@ pub struct SingleQuadScan {
     pub intensity: Vec<f32>,
 }
 
-/// Parse the `Retention Time` / `Spectrum Index` streams: both are a
-/// plain, headerless `u32[N]` array (`Spectrum Index` holding absolute
-/// byte offsets of each scan into `MS Raw Data`, `Retention Time` holding
-/// milliseconds) - the same shape as `.qgd`'s Variant A `Spectrum Index`
-/// (`raw::qgd::parse_spectrum_index`).
-pub fn parse_u32_array(data: &[u8]) -> Vec<u32> {
-    let n = data.len() / 4;
-    (0..n)
-        .map(|i| LittleEndian::read_u32(&data[i * 4..i * 4 + 4]))
-        .collect()
-}
+/// The `Retention Time` / `Spectrum Index` streams are a plain, headerless
+/// `u32[N]` array (`Spectrum Index` holding absolute byte offsets of each
+/// scan into `MS Raw Data`, `Retention Time` holding milliseconds) - the
+/// same shape as `.qgd`'s Variant A `Spectrum Index`. Re-exported from
+/// [`crate::raw::parse_u32_array`] so this path keeps working.
+pub use super::parse_u32_array;
 
 /// Parse one scan from `MS Raw Data` given its full byte range (64-byte
 /// header + peak payload, bounded by consecutive `Spectrum Index`
@@ -89,14 +86,6 @@ pub fn parse_scan(scan_bytes: &[u8]) -> crate::Result<SingleQuadScan> {
         mz,
         intensity,
     })
-}
-
-/// Read a little-endian unsigned integer of `width` bytes (1-4) into a
-/// `u32`.
-fn read_uint_le(bytes: &[u8]) -> u32 {
-    let mut buf = [0u8; 4];
-    buf[..bytes.len()].copy_from_slice(bytes);
-    u32::from_le_bytes(buf)
 }
 
 #[cfg(test)]

@@ -4,6 +4,8 @@
 
 use byteorder::{ByteOrder, LittleEndian};
 
+use super::read_uint_le;
+
 pub const SCAN_HEADER_SIZE: usize = 32;
 
 /// One decoded scan from `MS Raw Data`, tagged by acquisition mode.
@@ -55,12 +57,10 @@ impl QgdScan {
 pub fn parse_spectrum_index(data: &[u8]) -> crate::Result<Vec<u64>> {
     let size = data.len();
     if size % 4 == 0 {
-        let n = size / 4;
-        let mut offsets = Vec::with_capacity(n);
-        for i in 0..n {
-            offsets.push(LittleEndian::read_u32(&data[i * 4..i * 4 + 4]) as u64);
-        }
-        Ok(offsets)
+        Ok(super::parse_u32_array(data)
+            .into_iter()
+            .map(u64::from)
+            .collect())
     } else if size >= 2 && size % 8 == 2 {
         let n = (size - 2) / 8;
         let mut offsets = Vec::with_capacity(n);
@@ -74,14 +74,6 @@ pub fn parse_spectrum_index(data: &[u8]) -> crate::Result<Vec<u64>> {
             "Spectrum Index stream size {size} matches neither Variant A (u32[N]) nor Variant B (2-byte header + u64[N])"
         )))
     }
-}
-
-/// Read a little-endian unsigned integer of `width` bytes (2, 3, or 4)
-/// into a `u32`.
-fn read_uint_le(bytes: &[u8]) -> u32 {
-    let mut buf = [0u8; 4];
-    buf[..bytes.len()].copy_from_slice(bytes);
-    u32::from_le_bytes(buf)
 }
 
 /// Parse one scan from `MS Raw Data` given its full byte range (32-byte

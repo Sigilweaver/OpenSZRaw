@@ -7,7 +7,6 @@
 
 use std::path::Path;
 
-use byteorder::{ByteOrder, LittleEndian};
 use cfb::CompoundFile;
 use openmassspec_core::{
     Analyzer, ChromatogramRecord, CvTerm, PrecursorInfo, RunMetadata, ScanMode, SpectrumRecord,
@@ -115,13 +114,6 @@ pub struct ScanIndexInfo {
     pub event_id: Option<u32>,
     pub entry_index: Option<usize>,
     pub channel_index: Option<usize>,
-}
-
-fn parse_u32_array(data: &[u8]) -> Vec<u32> {
-    let n = data.len() / 4;
-    (0..n)
-        .map(|i| LittleEndian::read_u32(&data[i * 4..i * 4 + 4]))
-        .collect()
 }
 
 impl Reader {
@@ -258,7 +250,7 @@ impl Reader {
                 let rt = raw::read_stream(&mut comp, TTFL_RETENTION_TIME)?;
                 let subsets = ttfl::parse_data_index(&di)?;
                 let bounds = ttfl::scan_bounds(&subsets, ms_raw.len());
-                let retention_time_ms = parse_u32_array(&rt);
+                let retention_time_ms = raw::parse_u32_array(&rt);
                 // Any of the 3 on-disk copies carries the same
                 // calibration data (see `TTFL_TUNING_RESULT`'s doc
                 // comment); try each in turn and fall back to `None`
@@ -278,7 +270,7 @@ impl Reader {
             Variant::SingleQuad => {
                 let si = raw::read_stream(&mut comp, MASS_RAW_SPECTRUM_INDEX)?;
                 let ms_raw = raw::read_stream(&mut comp, MASS_RAW_MS_RAW_DATA)?;
-                let offsets = mass_raw::parse_u32_array(&si);
+                let offsets = raw::parse_u32_array(&si);
                 Decoded::SingleQuad { ms_raw, offsets }
             }
         };
@@ -809,6 +801,7 @@ impl SpectrumSource for Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use byteorder::{ByteOrder, LittleEndian};
 
     /// Exact `name:` lines from PSI-MS `psi-ms.obo` (data-version 4.1.249)
     /// for every accession this crate emits. mzML validators reject an

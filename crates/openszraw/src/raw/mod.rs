@@ -105,6 +105,24 @@ pub fn detect_variant<F: Read + std::io::Seek>(
     }
 }
 
+/// Parse a plain, headerless little-endian `u32[N]` array (e.g. a
+/// `Retention Time` stream, or a `Spectrum Index` holding absolute byte
+/// offsets). Trailing bytes that do not fill a whole `u32` are ignored.
+pub fn parse_u32_array(data: &[u8]) -> Vec<u32> {
+    data.chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
+/// Read a little-endian unsigned integer of 1-4 bytes into a `u32`.
+/// Callers guarantee `bytes.len() <= 4`.
+pub(crate) fn read_uint_le(bytes: &[u8]) -> u32 {
+    debug_assert!(bytes.len() <= 4);
+    let mut buf = [0u8; 4];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    u32::from_le_bytes(buf)
+}
+
 /// Read an entire CFBF stream into memory.
 pub fn read_stream<F: Read + std::io::Seek>(
     comp: &mut CompoundFile<F>,
@@ -147,6 +165,19 @@ mod tests {
             comp.create_stream(stream).unwrap();
         }
         comp
+    }
+
+    #[test]
+    fn parse_u32_array_reads_le_and_ignores_trailing_bytes() {
+        let data = [1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 9];
+        assert_eq!(parse_u32_array(&data), vec![1, u32::MAX]);
+    }
+
+    #[test]
+    fn read_uint_le_widths() {
+        assert_eq!(read_uint_le(&[0x34, 0x12]), 0x1234);
+        assert_eq!(read_uint_le(&[0x34, 0x12, 0x03]), 0x031234);
+        assert_eq!(read_uint_le(&[1, 2, 3, 4]), 0x04030201);
     }
 
     #[test]
