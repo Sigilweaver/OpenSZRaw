@@ -25,7 +25,7 @@ pub struct DataIndexSubset {
     /// position in the stream. On 4-real-channel files (e.g. MTBLS432)
     /// these coincide (one 64-byte block == one RT point's 4 channels,
     /// per `docs/format/03-lcd-ttfl-msdata.md`), but on files with fewer
-    /// real channels this is not true: verified this session against
+    /// real channels this is not true: verified against
     /// `PXD025121/17.lcd`, whose acquisition has only 2 real channels
     /// per RT point, so each 64-byte block packs *two* consecutive RT
     /// points' worth of subsets (block 0's four subsets carry entry_i
@@ -46,15 +46,13 @@ pub struct DataIndexSubset {
 ///
 /// The stream is normally `N_RT * 64` bytes (4 subsets per RT point), but
 /// a trailing **partial** final block (16, 32, or 48 bytes - 1 to 3
-/// leftover subsets) is a real, observed condition: verified against 9
-/// files in `PXD025121` this session, where a file with an odd number of
+/// leftover subsets) is a real, observed condition in 9 files in
+/// `PXD025121`, where a file with an odd number of
 /// RT points and 2 real channels per point packs its final RT point's 2
 /// subsets alone rather than padding to a full 64-byte block (e.g.
 /// `PXD025121/17.lcd`: 657 RT points x 2 real channels = 1314 subsets =
 /// 328 full 64-byte blocks + 1 trailing 32-byte block, `21024` bytes
-/// total). Rejecting anything not an exact multiple of 64 - as the
-/// original format doc's model implies - fails to open 9 real corpus
-/// files; this parses full blocks first, then a trailing partial block
+/// total). This parses full blocks first, then a trailing partial block
 /// if the remainder is a positive multiple of 16.
 pub fn parse_data_index(data: &[u8]) -> crate::Result<Vec<DataIndexSubset>> {
     let n_full_blocks = data.len() / DATA_INDEX_ENTRY_SIZE;
@@ -499,7 +497,7 @@ mod tests {
         // Full 64-byte block (entry 0's 4 subsets) plus a trailing
         // 32-byte partial block (2 subsets, entry 1) - reproduces the
         // real trailing-partial-block condition found in 9 PXD025121
-        // files this session.
+        // files.
         let mut data = vec![0u8; 64 + 32];
         write_subset(&mut data[0..16], 0, 0, 0);
         write_subset(&mut data[16..32], 10, 0, 1);
@@ -561,7 +559,7 @@ mod tests {
         assert!(decode_scan(&scan).is_none());
     }
 
-    /// The original quadratic search, kept as a reference to check the
+    /// Straightforward quadratic search, used as a reference to check the
     /// linear one against.
     fn find_prefix_end_naive(payload: &[u8]) -> Option<usize> {
         if payload.len() < 4 {

@@ -83,13 +83,13 @@ pub fn parse_spectrum_index(data: &[u8]) -> crate::Result<Vec<u64>> {
 /// Verified against the local corpus by summing decoded intensities and
 /// comparing with the file's own `GCMS Raw Data/TIC Data` (`u64` per scan):
 ///
-/// - `2` -> 2 bytes: the original documented case (PXD019638).
+/// - `2` -> 2 bytes (PXD019638).
 /// - `3` -> 3 bytes: 1,320 scans in `PXD019638/L-B2-Br0-1.qgd` and 4,602
 ///   in `MTBLS11411/240403_10_Control 2.qgd`, all matching `TIC Data`
-///   exactly. Previously skipped.
+///   exactly.
 /// - `1` -> 4 bytes: 130 scans across 4 `MTBLS11411` files, all on
 ///   high-abundance ions. These match `TIC Data` exactly only once bit 31
-///   is cleared (see [`PROFILE_U32_VALUE_MASK`]). Previously skipped.
+///   is cleared (see [`PROFILE_U32_VALUE_MASK`]).
 ///
 /// `0` is the Variant B (MRM) layout, which keeps these header slots
 /// zero; any other code is unknown and returns `None`.
@@ -179,14 +179,10 @@ pub fn parse_scan(scan_bytes: &[u8]) -> crate::Result<QgdScan> {
 
     // Variant B: MRM/targeted mode. The header's own transition count
     // (`n_transitions_b`, offset 0x1A) gives an exact, unambiguous
-    // per-transition record size (`data_bytes / n_transitions`), which we
-    // use in preference to the format doc's blind-divisibility fallback
-    // (dividing by 6/7/8 and hoping for a unique fit) - this was verified
-    // against real corpus bytes this session (PXD034978:
-    // event 101 -> 4-byte intensity, event 102 -> 2-byte, event
-    // 103 -> 3-byte, all exactly reproducing
-    // `data_bytes / n_transitions_b - 4`, and matching the doc's own
-    // per-event width table). A transition record is
+    // per-transition record size (`data_bytes / n_transitions`). In
+    // PXD034978 this yields event 101 -> 4-byte intensity, 102 -> 2-byte,
+    // 103 -> 3-byte, matching the per-event width table in the format
+    // doc. A transition record is
     // `[precursor_mz: u16 *10][product_mz: u16 *10][intensity: LE uint,
     // 2/3/4 bytes]`.
     if n_transitions_b > 0 && data_bytes.is_multiple_of(n_transitions_b as usize) {
@@ -308,7 +304,7 @@ mod tests {
 
     #[test]
     fn mrm_scan_roundtrip() {
-        // Mirrors the real event-102 bytes verified this session:
+        // Mirrors real event-102 bytes from PXD034978:
         // transitions (320.2 -> 116.0, intensity 504), (350.2 -> 116.0, intensity 508).
         let mut buf = vec![0u8; SCAN_HEADER_SIZE];
         LittleEndian::write_u32(&mut buf[0x04..0x08], 387000);

@@ -15,8 +15,9 @@ Every scan in `GCMS Raw Data/MS Raw Data` starts with a 32-byte header,
 located via the `Spectrum Index` stream. Two acquisition modes exist:
 
 - **Full-scan profile mode**: the payload is `N_Peaks` interleaved
-  `(m/z, intensity)` `u16` pairs (m/z scaled by 10). The reader yields
-  one MS1 `SpectrumRecord` per scan.
+  `(m/z, intensity)` records: a `u16` m/z scaled by 10, then a 2-, 3-,
+  or 4-byte intensity whose width the header's `Format` code selects.
+  The reader yields one MS1 `SpectrumRecord` per scan.
 - **MRM/targeted mode**: the payload is a sequence of monitored
   transitions, each `(precursor m/z, product m/z, intensity)` with a
   variable intensity byte width read directly from the scan header. The

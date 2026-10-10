@@ -146,8 +146,7 @@ fn chromatograms_to_py<'py>(
     Ok(out)
 }
 
-/// A complete vendor-neutral spectrum record. Peak arrays remain Python lists
-/// for compatibility with the original native binding.
+/// A complete vendor-neutral spectrum record. Peak arrays are Python lists.
 #[pyclass]
 pub struct Spectrum {
     rec: SpectrumRecord,

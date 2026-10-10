@@ -68,9 +68,8 @@ fn ttfl_lc_chromatogram_fixture() -> PathBuf {
     ttfl_fixture()
 }
 
-/// Regression fixture for the `Data Index` `entry_i`/trailing-partial-
-/// block bug fixed this session - see the addendum in
-/// `docs/format/03-lcd-ttfl-msdata.md` and
+/// Fixture for the `Data Index` `entry_i`/trailing-partial-block layout -
+/// see `docs/format/03-lcd-ttfl-msdata.md` and
 /// `docs/format/06-known-limitations.md` section 1b. This file has only
 /// 2 real interleaved channels per RT point (packing 2 RT points per
 /// 64-byte `Data Index` block) and an odd RT-point count, producing a
@@ -216,7 +215,7 @@ fn qtfl_centroid_mz_is_plausible_and_has_ms2() {
     assert!(has_ms1, "expected at least one MS1 (event_id==1) scan");
     assert!(
         has_ms2,
-        "expected at least one MS2 (event_id>1) scan - see docs/format/05 addendum"
+        "expected at least one MS2 (event_id>1) scan - see docs/format/05"
     );
 
     let with_peaks: Vec<_> = spectra.iter().filter(|s| !s.mz.is_empty()).collect();
@@ -231,8 +230,8 @@ fn qtfl_centroid_mz_is_plausible_and_has_ms2() {
         }
     }
 
-    // Every MS2 spectrum must carry a precursor reference (even though we
-    // do not decode the real precursor m/z this session - see
+    // Every MS2 spectrum must carry a precursor reference (even though
+    // the real precursor m/z is not decoded - see
     // docs/format/06-known-limitations.md).
     for s in spectra.iter().filter(|s| s.ms_level == 2) {
         assert!(
@@ -333,7 +332,7 @@ fn ttfl_base_peak_mz_is_plausible_for_most_scans() {
 }
 
 /// See `raw::lc_chrom` and docs/format/04's "LC Raw Data Chromatogram
-/// Ch5/Ch6 decode" session (Sigilweaver/OpenSZRaw#21). Only `Ch6` is
+/// Ch5/Ch6 decode" section (Sigilweaver/OpenSZRaw#21). Only `Ch6` is
 /// expected to decode - `Ch5` is deliberately skipped (single repeated
 /// value in every corpus file, grammar untestable, see
 /// `lc_chrom::decode_stream`'s doc comment).
@@ -406,9 +405,8 @@ fn single_quad_conformance() {
 /// decodes full-scan profile spectra with a per-scan peak-record width
 /// (4 or 5 bytes, observed in this corpus) derived from the header's own
 /// peak count, verified byte-exact against `Mass Raw Data/TIC Data`
-/// during development (0 mismatches across 19,200 scans, 8 corpus
-/// files) - that check lives in the format doc / decode session, not
-/// here, since `TIC Data` itself is not currently surfaced through
+/// (0 mismatches across 19,200 scans, 8 corpus files). That check is
+/// documented in the format doc, not run here, since `TIC Data` itself is not currently surfaced through
 /// `SpectrumSource`.
 #[test]
 fn single_quad_peaks_are_plausible() {

@@ -11,8 +11,8 @@ pub const SCAN_HEADER_SIZE: usize = 64;
 /// `[rt_ms: u32, scan_number: u32 (1-based), zero: u32]`.
 ///
 /// Not covered by `docs/format/05-qtfl-centroid.md` (which documents only
-/// `Centroid Index`/`Centroid Data`) - verified against
-/// `MSV000084197/20190607_NM16.lcd` this session: the record count
+/// `Centroid Index`/`Centroid Data`). Verified against
+/// `MSV000084197/20190607_NM16.lcd`: the record count
 /// (16018) exactly matches the `Centroid Index` record count, and the
 /// `scan_number` field runs `1..=N` matching stream position; the first
 /// field matches header `u32[1]` for every scan after the first (scan 0's
@@ -27,22 +27,20 @@ pub const RT_RECORD_SIZE: usize = 12;
 #[derive(Debug, Clone, Copy)]
 pub struct CentroidIndexRecord {
     pub offset: u32,
-    /// `u32[2]`: doc 05 calls this "Subset/Interleave Index"; verified
-    /// this session (not in the original doc) to be a per-acquisition-
-    /// cycle counter - see `event_id`.
+    /// `u32[2]`: doc 05 calls this "Subset/Interleave Index". It is a
+    /// per-acquisition-cycle counter - see `event_id`.
     pub cycle_index: u32,
-    /// `u32[5]`: doc 05 calls this "Segment/Event ID". Verified this
-    /// session against `MSV000084197/20190607_NM16.lcd`: within one
+    /// `u32[5]`: doc 05 calls this "Segment/Event ID". Verified against
+    /// `MSV000084197/20190607_NM16.lcd`: within one
     /// `cycle_index` group, `event_id` always starts at 1 and increments
     /// (1, 2, ..up to 4 seen in this file), a pattern consistent with a
     /// DDA MS1 survey scan (`event_id == 1`) followed by a
     /// variable number of MS2 product-ion scans
     /// (`event_id > 1`, one per precursor selected that cycle) - see the
-    /// addendum in `docs/format/05-qtfl-centroid.md`. This is new
-    /// information beyond what the original (CONFIRMED-for-payload-decode
-    /// only) doc covered; the real per-scan precursor m/z lives in the
-    /// separate `QTFL RawData/DDA` stream, which was not decoded this
-    /// session - see `docs/format/06-known-limitations.md`.
+    /// cycle structure in `docs/format/05-qtfl-centroid.md`. The real
+    /// per-scan precursor m/z lives in the separate `QTFL RawData/DDA`
+    /// stream, which is not decoded - see
+    /// `docs/format/06-known-limitations.md`.
     pub event_id: u32,
 }
 
@@ -93,8 +91,8 @@ pub struct QtflSpectrum {
     pub mz: Vec<f64>,
     pub intensity: Vec<f32>,
     /// Base peak intensity read directly from the scan header (`u32[4]`).
-    /// Verified to equal `max(intensity)` exactly on real corpus scans
-    /// this session, so it is safe to surface as `SpectrumRecord`'s
+    /// Verified to equal `max(intensity)` exactly on real corpus scans,
+    /// so it is safe to surface as `SpectrumRecord`'s
     /// `base_peak_intensity` (the conformance suite cross-checks it
     /// against the decoded array).
     pub base_peak_intensity: Option<f64>,
@@ -110,16 +108,15 @@ pub struct QtflSpectrum {
 /// (byte offset 0x24), and is 1, 2, or 4 bytes depending on the scan's
 /// dynamic range. `N = S / (8 + intensity_width)` peaks follow: `N` u64
 /// m/z values (scaled by 1e12) then `N` little-endian unsigned intensity
-/// values of that width. Verified this session against
+/// values of that width. Verified against
 /// `MSV000084197/20190607_NM16.lcd` by cross-checking `max(intensity)`
 /// against the header's declared base-peak intensity (`u32[4]`) across
 /// every non-empty scan in the file: 0 mismatches out of 13,929 scans
 /// once the width is read from `u32[9]` (width distribution in that file:
 /// 13,696 scans at 2 bytes, 218 at 4 bytes, 15 at 1 byte) - see the
-/// addendum in `docs/format/05-qtfl-centroid.md`. Using a fixed 2-byte
-/// width unconditionally (the original doc's model) silently produces a
-/// corrupt decode on the wider-dynamic-range scans (confirmed by hand:
-/// treating a real 4-byte-intensity MS2 scan as 2-byte intensity yields a
+/// width discussion in `docs/format/05-qtfl-centroid.md`. A fixed 2-byte
+/// width would produce a corrupt decode on the wider-dynamic-range scans
+/// (a real 4-byte-intensity MS2 scan read as 2-byte intensity yields a
 /// spurious zero-interleaved pattern and a base-peak intensity that does
 /// not match the header's declared value).
 pub fn decode_scan(scan_bytes: &[u8]) -> crate::Result<QtflSpectrum> {
