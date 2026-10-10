@@ -105,6 +105,26 @@ pub fn detect_variant<F: Read + std::io::Seek>(
     }
 }
 
+/// Parse a plain, headerless little-endian `u32[N]` array (e.g. a
+/// `Retention Time` stream, or a `Spectrum Index` holding absolute byte
+/// offsets). Trailing bytes that do not fill a whole `u32` are ignored.
+pub fn parse_u32_array(data: &[u8]) -> Vec<u32> {
+    data.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| u32::from_le_bytes(*c))
+        .collect()
+}
+
+/// Read a little-endian unsigned integer of 1-4 bytes into a `u32`.
+/// Callers guarantee `bytes.len() <= 4`.
+pub(crate) fn read_uint_le(bytes: &[u8]) -> u32 {
+    debug_assert!(bytes.len() <= 4);
+    let mut buf = [0u8; 4];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    u32::from_le_bytes(buf)
+}
+
 /// Read an entire CFBF stream into memory.
 pub fn read_stream<F: Read + std::io::Seek>(
     comp: &mut CompoundFile<F>,
@@ -120,14 +140,25 @@ pub fn read_stream<F: Read + std::io::Seek>(
 
 /// Read a CFBF stream into memory if it exists, returning `None` rather
 /// than an error when it is absent (many streams are instrument/mode
-/// specific and legitimately missing).
+/// specific and legitimately missing). A stream that exists but cannot
+/// be opened or read also returns `None`, and is logged at `warn` level.
 pub fn read_stream_opt<F: Read + std::io::Seek>(
     comp: &mut CompoundFile<F>,
     path: &str,
 ) -> Option<Vec<u8>> {
-    let mut stream = comp.open_stream(path).ok()?;
+    let mut stream = match comp.open_stream(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            log::warn!("openszraw: cannot open stream '{path}': {e}");
+            return None;
+        }
+    };
     let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).ok()?;
+    if let Err(e) = stream.read_to_end(&mut buf) {
+        log::warn!("openszraw: cannot read stream '{path}': {e}");
+        return None;
+    }
     Some(buf)
 }
 
@@ -147,6 +178,19 @@ mod tests {
             comp.create_stream(stream).unwrap();
         }
         comp
+    }
+
+    #[test]
+    fn parse_u32_array_reads_le_and_ignores_trailing_bytes() {
+        let data = [1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 9];
+        assert_eq!(parse_u32_array(&data), vec![1, u32::MAX]);
+    }
+
+    #[test]
+    fn read_uint_le_widths() {
+        assert_eq!(read_uint_le(&[0x34, 0x12]), 0x1234);
+        assert_eq!(read_uint_le(&[0x34, 0x12, 0x03]), 0x031234);
+        assert_eq!(read_uint_le(&[1, 2, 3, 4]), 0x04030201);
     }
 
     #[test]

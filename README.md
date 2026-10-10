@@ -5,7 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/openszraw.svg)](https://pypi.org/project/openszraw/)
 [![docs.rs](https://img.shields.io/docsrs/openszraw)](https://docs.rs/openszraw)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Rust MSRV](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust MSRV](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
 
 > Part of the [OpenMassSpec](https://github.com/Sigilweaver/OpenMassSpec)
 > stack for mass spectrometry raw-file access.
@@ -17,6 +17,15 @@ MRM/targeted) and `.lcd` LC-MS across IT-TOF (profile) and QTOF
 (centroid) acquisitions.
 
 Documentation: [sigilweaver.app/openszraw/docs](https://sigilweaver.app/openszraw/docs)
+
+## Known issues
+
+- IT-TOF `.lcd`: every spectrum is labelled MS1 with no polarity,
+  including MS2 channels.
+- LC-MS/MS triple quadrupole `.lcd` (LCMS-8040/8050/8060) is not
+  supported; `Reader::open` refuses these files.
+- A small number of QTOF scans fail to decode; each failure is logged and
+  counted by `Reader::skipped_scans()`.
 
 ## Install
 

@@ -12,6 +12,8 @@ import pytest
 def test_decoded_fields():
     path = Path(os.environ.get("OPENSZRAW_TEST_FILE", "corpus/PXD034978_49_27a__8122021_11.qgd"))
     if not path.is_file():
+        if os.environ.get("REQUIRE_CORPUS") == "1":
+            pytest.fail(f"REQUIRE_CORPUS=1 but test file is missing: {path}")
         pytest.skip("set OPENSZRAW_TEST_FILE to a QGD or LCD file")
     reader = openszraw.RawReader(str(path))
     run = reader.run_info()
@@ -20,6 +22,9 @@ def test_decoded_fields():
     assert reader.variant in {"qgd", "qtfl", "ttfl", "singlequad"}
     assert reader.calibration() is None or isinstance(reader.calibration()["a"], float)
     assert reader.scan_index()
+    assert reader.skipped_scans >= 0
+    with pytest.raises(IndexError):
+        reader.read_spectrum(reader.scan_count)
     first = reader.read_spectrum(0)
     streamed = next(openszraw.iter_spectra(str(path)))
     assert first.native_id == streamed.native_id

@@ -10,7 +10,7 @@ sidebar_position: 2
 cargo add openszraw
 ```
 
-OpenSZRaw needs Rust 1.85 or newer. There are no native or system
+OpenSZRaw needs Rust 1.88 or newer. There are no native or system
 dependencies.
 
 ## Python

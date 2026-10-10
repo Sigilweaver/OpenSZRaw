@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `.qgd` run metadata now pairs `MS:1000560` with its exact PSI-MS name,
+  "mass spectrometer file format", instead of the made-up name
+  "Shimadzu GCMSsolution QGD format". mzML validators reject an accession
+  with a mismatched name. psi-ms.obo has no `.qgd`-specific term. A unit
+  test now checks every emitted CV term name against the OBO.
+- GC-MS full-scan profile scans with 3- or 4-byte intensities are now
+  decoded instead of skipped. The header `Format` code selects the width
+  (`2` -> 2 bytes, `3` -> 3 bytes, `1` -> 4 bytes with bit 31 masked).
+  Decoded sums match the file's own TIC for all 391,625 profile scans in
+  the local corpus. Previously 59,403 scans across PXD019638 and
+  MTBLS11411 were dropped.
+- IT-TOF RLE prefix search is now linear time. A crafted 64 KB scan
+  payload took about 6 s to reject (quadratic search); it now takes
+  under 1 ms. Results are unchanged (checked against the old search by a
+  randomized test).
+- A scan that cannot be decoded no longer renumbers every scan after it.
+  `scan_number` and `native_id` now come from the scan's position in the
+  source index (GC-MS MRM: its transition slots, reserved from the
+  header even when the payload is bad). `index` stays the dense output
+  position. Output is unchanged for files with no skipped scans.
+- The reader no longer hides stream and metadata problems: an existing
+  CFBF stream that cannot be opened or read, a missing TTFL calibration
+  (raw index used as m/z), and spectra with no `Retention Time` record
+  (reported as 0) are logged at `warn`; an LC chromatogram stream that
+  does not decode is logged at `debug`. `corpus_scan` reports skipped
+  scans and malformed `index.csv` rows.
+
+### Added
+
+- `Reader::skipped_scans()` reports how many source scans the last
+  `iter_spectra` call left out. Each skip is logged at `debug` level
+  through the `log` crate, with one `warn` summary per call. Adds a `log`
+  dependency.
+- Python `RawReader.skipped_scans` exposes the same count.
+- Corpus-backed tests find fixtures through `OPENSZRAW_CORPUS` (was a
+  hardcoded path) and fail instead of skipping when `REQUIRE_CORPUS=1`.
+  CI sets both for the GC-MS fixtures it downloads, verifies them by
+  sha256, and retries downloads (`curl -fsSL --retry 3`).
+- Committed `Cargo.lock`, plus `.cargo/config.toml` so lockfile updates
+  stay within the MSRV.
+
+### Changed
+
+- **Breaking (pre-1.0):** `openszraw::Error` is now `#[non_exhaustive]`.
+  Exhaustive `match`es on it need a wildcard arm. This lets later
+  releases add error variants without another breaking change.
+- Python `RawReader.read_spectrum` raises `IndexError` (was
+  `RuntimeError`) for an out-of-range scan index.
+- MSRV raised from 1.85 to 1.88, matching `openmassspec-core` 2.0.0,
+  which already required 1.88.
+
 ## [0.2.0] - 2026-09-28
 
 ### Added
