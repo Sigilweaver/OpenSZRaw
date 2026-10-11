@@ -35,14 +35,24 @@ datasets (PRIDE, MassIVE, and MetaboLights accessions); see
 | OLE2/CFBF container (shared by all three variants)  | supported                                                       |
 | `.qgd` GC-MS, full-scan profile mode                | supported                                                       |
 | `.qgd` GC-MS, MRM/targeted mode                     | supported                                                       |
-| `.lcd` IT-TOF (run-length-encoded profile spectra)  | supported, calibrated to physical m/z - see [known limitations](./format/known-limitations) |
-| `.lcd` QTOF / 9030 series (centroid spectra)        | supported                                                       |
+| `.lcd` IT-TOF (run-length-encoded profile spectra)  | opens; per-file m/z calibration applied but not validated - see [known limitations](./format/known-limitations) |
+| `.lcd` QTOF / 9030 series (centroid spectra)        | opens; intensities correct, m/z values wrong - see [known limitations](./format/known-limitations) |
 | QTOF MS2 precursor m/z (`QTFL RawData/DDA`)         | not yet decoded                                                 |
 | PDA / UV chromatogram streams                       | out of scope for this reader; encoding not decoded              |
 
 `Reader::open` (and Python's `RawReader`) auto-detects `.qgd` vs `.lcd`
 IT-TOF vs `.lcd` QTOF from the file's internal CFBF stream layout, never
 from the filename or extension alone.
+
+:::warning LC-MS m/z is not reliable yet
+QTOF (`.lcd`, LCMS-9030) m/z values are wrong: the m/z axis is distorted,
+so isotope peaks appear about 1100/m Da apart instead of 1.003 Da. IT-TOF
+m/z values are not validated. Do not use LC-MS QTOF or IT-TOF m/z values
+for identification or accurate-mass work. GC-MS `.qgd` m/z is consistent
+with unit-resolution data. See
+[Known issues and gaps](https://github.com/Sigilweaver/OpenSZRaw#known-issues-and-gaps)
+in the README.
+:::
 
 ## Status
 

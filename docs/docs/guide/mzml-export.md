@@ -25,6 +25,6 @@ variant (`MS:1003009` "Shimadzu Biotech LCD format" for both `.lcd`
 variants; the generic `MS:1000560` "mass spectrometer file format" node
 for `.qgd`, since no PSI-MS CV term dedicated to `.qgd` exists yet).
 Given the [current reader limitations](./reader#what-the-reader-does-not-yet-do)
-(no IT-TOF m/z calibration, no decoded QTOF MS2 precursor m/z, no
-polarity), exported mzML will carry those same gaps until the
+(QTOF m/z wrong, IT-TOF m/z not validated, IT-TOF MS level not
+decoded, no QTOF MS2 precursor m/z, no polarity), exported mzML will carry those same gaps until the
 underlying fields are decoded.

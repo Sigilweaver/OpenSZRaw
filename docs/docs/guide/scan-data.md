@@ -33,9 +33,11 @@ See [GC-MS (.qgd)](../format/qgd-gcms) for the full byte layout.
 Every scan in `TTFL Raw Data/MS Raw Data` is a variable-length metadata
 prefix followed by a run-length-encoded sparse array of 16-bit intensity
 samples over an implicit index axis. The reader reconstructs
-`(position, intensity)` pairs from the RLE stream and exposes `position`
-directly as `mz` - it is **not** calibrated m/z, just a raw digitizer
-time-bin index (see [Known limitations](../format/known-limitations)).
+`(position, intensity)` pairs from the RLE stream and converts
+`position` (a raw digitizer time-bin index) to `mz` with a per-file
+calibration from the file's own tuning data. These m/z values are not
+validated, and spectra are not always sorted by m/z (see
+[Known limitations](../format/known-limitations)).
 Four interleaved acquisition channels (`sub_i` 0-3) are tracked per
 retention-time point via the `Data Index` stream, but the reader does
 not currently map any channel to a specific polarity or MS level.
@@ -51,6 +53,8 @@ scan header - it is not always 16-bit. `Centroid Index`'s per-scan
 `event_id` field distinguishes MS1 (`event_id == 1`) from MS2
 (`event_id > 1`) scans within each acquisition cycle; MS2 records carry
 a reference to their parent MS1 scan but not a decoded precursor m/z.
+The reported m/z values are wrong: the axis is distorted, so isotope
+peaks appear about 1100/m Da apart instead of 1.003 Da.
 
 See [LC-MS QTOF (.lcd)](../format/lcd-qtof) for the full byte layout.
 
