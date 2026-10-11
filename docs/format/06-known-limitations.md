@@ -29,6 +29,11 @@ calibration is found, and falls back to the raw, uncalibrated index if no
 `TTFL Tuning/Tuning Result NN` stream with a usable calibration table is
 present. No file in the local corpus lacks one.
 
+**Open: m/z not validated.** A physics check on sample spectra found no
+isotope structure and no cluster of known background ions, and 21 of 29
+sampled files contain unsorted m/z arrays. Treat IT-TOF m/z as
+unverified until this is resolved.
+
 **Open**: a small constant index-origin offset between the RLE payload's
 index convention and the tuning stream's time convention has not been
 independently ruled out - see the "noise-tail caveat" in
@@ -254,3 +259,14 @@ audit/system-check metadata. None of it is read by `crates/openszraw`.
 See `docs/format/08-metadata-and-processing-streams.md` for the
 corpus-wide map and a prioritized list; `File Property`/`Method File
 Property` (plain XML) is the smallest contained piece.
+
+## 14. QTOF (`.lcd` QTFL): m/z transform is wrong
+
+`crates/openszraw::reader::qtfl_spectra` decodes each stored `u64` value
+as `mz = value / 1e12`. This reproduces the header's base-peak intensity
+on every non-empty scan, but not physical m/z: in two independent
+accessions (MSV000084197, MTBLS13204), isotope partners of intense peaks
+are spaced about 1100/m Da apart (1.86 Da at m/z 592, 1.51 at 729, 1.04
+at 1062) instead of 1.0034 Da. The stored value is not linear in true
+m/z, and every QTOF file is affected. The correct transform is not yet
+known. See `docs/format/05-qtfl-centroid.md`.

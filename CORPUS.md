@@ -1,10 +1,9 @@
 # OpenSZRaw Validation Corpus
 
-Current size: approximately 16 GB across 2976 files, spanning 16 accessions
-across three public repositories. 47 files are `.qgd` (GC-MS: 2 established
-accessions plus 1 new GC-MS/MS accession); 2929 are `.lcd` (LC-MS), split
-across the IT-TOF, QTOF, QQQ, and (new) single-quadrupole instrument
-families.
+Current size: 50.1 GB across 2976 files, spanning 16 accessions across
+three public repositories. 47 files are `.qgd` (GC-MS: 2 GC-MS accessions
+plus 1 GC-MS/MS accession); 2929 are `.lcd` (LC-MS): 2230 IT-TOF, 416 QTOF,
+275 QQQ, and 8 single-quadrupole.
 
 | Accession | Source | Files | Format | Instrument family | Acquisition mode |
 |---|---|---|---|---|---|

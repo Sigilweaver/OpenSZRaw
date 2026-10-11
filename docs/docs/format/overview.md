@@ -27,7 +27,7 @@ see [Format variants](../guide/format-variants).
 | [OLE2 container](./ole2-container) | Shared container structure across all variants | Confirmed |
 | [GC-MS (.qgd)](./qgd-gcms) | `.qgd` scan index and payload encoding (profile and MRM modes) | Partial |
 | [LC-MS IT-TOF (.lcd)](./lcd-ittof) | `.lcd` IT-TOF scan header and run-length-encoded payload | Partial |
-| [LC-MS QTOF (.lcd)](./lcd-qtof) | `.lcd` QTOF centroid index and payload | Confirmed for the payload shape, with corrections |
+| [LC-MS QTOF (.lcd)](./lcd-qtof) | `.lcd` QTOF centroid index and payload | Payload shape and intensities confirmed; m/z transform wrong |
 | [Known limitations](./known-limitations) | What's deliberately unresolved across all variants | - |
 
 ## Clean-room provenance

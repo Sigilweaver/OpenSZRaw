@@ -6,8 +6,10 @@ sidebar_position: 4
 
 ## Status: Partial
 
-Payload run-length encoding: confirmed. Index-to-m/z calibration:
-confirmed. Scan metadata prefix: still open.
+Payload run-length encoding: confirmed. Index-to-m/z calibration: the
+fit to the file's tuning data is confirmed, but the resulting m/z values
+are not validated on sample spectra (see below). Scan metadata prefix:
+still open.
 
 The `TTFL Raw Data` storage in IT-TOF `.lcd` files holds the primary
 mass-spectrometry data. It uses an indexing scheme built around 4
@@ -62,7 +64,13 @@ from two accessions - 109,336 scans total, 100% clean. The reconstructed
 position axis can reach values in the hundreds of thousands for some
 scans, so the reader does not clamp or assume any upper bound on it.
 
-## Index-to-m/z calibration (confirmed)
+## Index-to-m/z calibration (fit confirmed, m/z not validated)
+
+The fit described below is exact to the tuning data, but an independent
+check on sample spectra found no isotope structure (most common peak
+spacings 0.23 to 0.26 Da) and no cluster of known background ions in 4
+IT-TOF accessions, and many spectra are not sorted by m/z. Treat IT-TOF
+m/z values as unverified.
 
 The RLE payload's reconstructed position is a raw digitizer/TOF time-bin
 index. The reader converts it to physical m/z using a per-file
@@ -91,9 +99,10 @@ pair independently expected to be positive polarity. See
 section 3c for the full derivation.
 
 Applying the calibration to the rare, very large noise-tail index values
-(into the hundreds of thousands) yields implausibly large m/z - this
-reflects those positions being electronic noise, not a flaw in the
-calibration; the reader does not filter or clamp them.
+(into the hundreds of thousands) yields implausibly large m/z (up to
+about 780,000). These may be electronic noise, but until the m/z axis is
+validated a calibration problem cannot be ruled out; the reader does not
+filter or clamp them.
 
 ## Not yet resolved
 
