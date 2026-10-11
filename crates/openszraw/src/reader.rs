@@ -1,16 +1,16 @@
 //! High-level reader for Shimadzu `.qgd` / `.lcd` files.
 //!
-//! [`Reader::open`] detects which of the three on-disk variants a file is
-//! (`.qgd` GC-MS, `.lcd` IT-TOF, `.lcd` QTOF - see the crate root doc
-//! comment) and presents a single [`SpectrumSource`] implementation
+//! [`Reader::open`] detects which on-disk [`Variant`] a file is (`.qgd`
+//! GC-MS, `.lcd` IT-TOF, QTOF or single quadrupole - see the crate root
+//! doc comment) and presents a single [`SpectrumSource`] implementation
 //! regardless of which is underneath.
 
 use std::path::Path;
 
 use cfb::CompoundFile;
 use openmassspec_core::{
-    Analyzer, ChromatogramRecord, CvTerm, PrecursorInfo, RunMetadata, ScanMode, SpectrumRecord,
-    SpectrumSource,
+    Analyzer, ChromatogramIter, ChromatogramRecord, CvTerm, PrecursorInfo, RunMetadata, ScanMode,
+    SpectrumIter, SpectrumRecord, SpectrumSource,
 };
 
 use crate::raw::{self, lc_chrom, mass_raw, qgd, qtfl, ttfl, Variant};
@@ -85,7 +85,7 @@ enum Decoded {
 /// A `.qgd` or `.lcd` reader. See the module doc comment.
 pub struct Reader {
     /// Stem name of the file (e.g. "20190607_NM16") used in run metadata.
-    pub stem: String,
+    stem: String,
     variant: Variant,
     decoded: Decoded,
     /// Earliest non-zero CFBF directory-entry creation timestamp in the
@@ -103,55 +103,103 @@ pub struct Reader {
     /// files in the local corpus.
     lc_chromatograms: Vec<(String, lc_chrom::LcChromatogram)>,
     /// Source scans (or TTFL channel subsets) that the last
-    /// `iter_spectra` call could not decode and left out. See
+    /// `iter_spectra` call reported as `Err`. See
     /// [`Reader::skipped_scans`].
     skipped_scans: usize,
 }
 
-/// Spectra decoded from one file, plus how many source scans were
-/// skipped because they could not be decoded.
+/// Spectra decoded from one file, in source order. A source scan that
+/// cannot be decoded is an `Err` item at its position.
 struct BuiltSpectra {
-    spectra: Vec<SpectrumRecord>,
+    records: Vec<crate::Result<SpectrumRecord>>,
+    /// Number of `Err` items in `records`.
     skipped: usize,
     /// Emitted spectra whose `Retention Time` record was missing, so
     /// their `retention_time` is 0.
     missing_rt: usize,
 }
 
-/// Log one skipped source scan. Scan identity (`scan_number`,
-/// `native_id`) always comes from the scan's position in the source
-/// index, so a skip never renumbers the scans after it.
-fn log_skip(kind: &str, stem: &str, source_index: usize, reason: &dyn std::fmt::Display) {
-    log::debug!("openszraw: {stem}: skipping {kind} scan at source index {source_index}: {reason}");
+impl BuiltSpectra {
+    fn with_capacity(n: usize) -> Self {
+        BuiltSpectra {
+            records: Vec::with_capacity(n),
+            skipped: 0,
+            missing_rt: 0,
+        }
+    }
+
+    /// Dense output position of the next `Ok` record.
+    fn next_index(&self) -> usize {
+        self.records.len() - self.skipped
+    }
+
+    /// Record one undecodable source scan as an `Err` item. Scan identity
+    /// (`scan_number`, `native_id`) always comes from the scan's position
+    /// in the source index, so an error never renumbers the scans after it.
+    fn push_err(&mut self, kind: &str, source_index: usize, reason: impl std::fmt::Display) {
+        self.skipped += 1;
+        self.records.push(Err(crate::Error::ScanDecode {
+            source_index,
+            message: format!("{kind}: {reason}"),
+        }));
+    }
+
+    /// Successfully decoded records, dropping errors. Test helper.
+    #[cfg(test)]
+    fn spectra(&self) -> Vec<SpectrumRecord> {
+        self.records
+            .iter()
+            .filter_map(|r| r.as_ref().ok().cloned())
+            .collect()
+    }
 }
 
 /// Decoded source index fields for one physical scan or TTFL channel subset.
+///
+/// `#[non_exhaustive]`: more decoded header fields may be added in a minor
+/// release. Values are only built by [`Reader::scan_index`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ScanIndexInfo {
+    /// Start byte offset of the scan in its data stream.
     pub offset: u64,
+    /// End byte offset (exclusive) of the scan in its data stream.
     pub end_offset: u64,
+    /// Retention time from the `Retention Time` stream (`.lcd` only).
     pub retention_time_ms: Option<u32>,
+    /// QTOF acquisition cycle index.
     pub cycle_index: Option<u32>,
+    /// QTOF acquisition event id (1 = MS1 survey scan).
     pub event_id: Option<u32>,
+    /// IT-TOF retention-time entry index.
     pub entry_index: Option<usize>,
+    /// IT-TOF subset position (0-3) within its `Data Index` block.
     pub channel_index: Option<usize>,
 }
 
 impl Reader {
+    /// The detected on-disk variant.
     pub fn variant(&self) -> Variant {
         self.variant
     }
 
-    /// Number of source scans (TTFL: channel subsets) that the most
-    /// recent [`SpectrumSource::iter_spectra`] call could not decode and
-    /// left out of its output. `0` before the first call. Each skip is
-    /// also logged at `debug` level via the `log` crate, with a `warn`
-    /// summary per call when any were skipped. Skips never renumber later
-    /// scans: `scan_number` and `native_id` come from the source index.
+    /// File stem (file name without extension), used in run metadata and
+    /// IT-TOF / GC-MS / single-quad native ids.
+    pub fn stem(&self) -> &str {
+        &self.stem
+    }
+
+    /// Number of `Err` items the most recent
+    /// [`SpectrumSource::iter_spectra`] call yielded: source scans (TTFL:
+    /// channel subsets) that could not be decoded. `0` before the first
+    /// call. Errors never renumber later scans: `scan_number` and
+    /// `native_id` come from the source index.
     pub fn skipped_scans(&self) -> usize {
         self.skipped_scans
     }
 
+    /// The IT-TOF index-to-m/z calibration, when this is an IT-TOF file
+    /// with a usable `TTFL Tuning` stream.
     pub fn ttfl_calibration(&self) -> Option<ttfl::Calibration> {
         match &self.decoded {
             Decoded::Ttfl { calibration, .. } => *calibration,
@@ -159,6 +207,8 @@ impl Reader {
         }
     }
 
+    /// Source index metadata, one item per physical scan (IT-TOF: per
+    /// channel subset), in source order.
     pub fn scan_index(&self) -> Vec<ScanIndexInfo> {
         match &self.decoded {
             Decoded::Qgd { ms_raw, offsets } => offsets
@@ -352,15 +402,14 @@ impl Reader {
 /// Identity: every source scan owns a fixed range of record "slots" (1
 /// for a profile scan, `n_transitions` for an MRM scan), and
 /// `scan_number`/`native_id` are the 1-based slot number. Slots are
-/// allocated from the source index whether or not the scan decodes - a
-/// skipped scan still consumes its header-declared slot count (or 1 if
-/// its header is unreadable) - so a skip does not renumber later scans.
-/// For files with no skipped scans this is identical to a running count.
+/// allocated from the source index whether or not the scan decodes - an
+/// undecodable scan (one `Err` item) still consumes its header-declared
+/// slot count (or 1 if its header is unreadable) - so an error does not
+/// renumber later scans. For files with no errors this is identical to a
+/// running count.
 fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
     let n = offsets.len();
-    let mut out = Vec::new();
-    let mut skipped = 0;
-    let missing_rt = 0;
+    let mut out = BuiltSpectra::with_capacity(n);
     let mut next_slot = 0usize;
     for i in 0..n {
         let start = offsets[i] as usize;
@@ -371,13 +420,11 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
         };
         let first_slot = next_slot;
         if start > end || end > ms_raw.len() {
-            skipped += 1;
             next_slot += 1;
-            log_skip(
+            out.push_err(
                 "GC-MS",
-                stem,
                 i,
-                &format_args!("offset range {start}..{end} outside MS Raw Data"),
+                format_args!("offset range {start}..{end} outside MS Raw Data"),
             );
             continue;
         }
@@ -385,9 +432,8 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
         let scan = match qgd::parse_scan(scan_bytes) {
             Ok(s) => s,
             Err(e) => {
-                skipped += 1;
                 next_slot += qgd::declared_record_count(scan_bytes);
-                log_skip("GC-MS", stem, i, &e);
+                out.push_err("GC-MS", i, e);
                 continue;
             }
         };
@@ -398,36 +444,21 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
         let rt_sec = scan.retention_time_ms() as f64 / 1000.0;
         match scan {
             qgd::QgdScan::Profile { mz, intensity, .. } => {
-                let idx = out.len();
                 let id = first_slot + 1;
-                out.push(SpectrumRecord {
-                    extra: ::std::collections::BTreeMap::new(),
-                    acquisition_event_id: None,
-                    index: idx,
-                    scan_number: id as u32,
-                    native_id: format!("source={stem} start={id} end={id}"),
-                    ms_level: 1,
-                    // No polarity bit is known in the 32-byte scan
-                    // header or Spectrum Index; left unpopulated rather
-                    // than assumed.
-                    polarity: None,
-                    scan_mode: Some(ScanMode::Profile),
-                    analyzer: Some(Analyzer::SQMS),
-                    filter: None,
-                    retention_time_sec: rt_sec,
-                    total_ion_current: None,
-                    base_peak_mz: None,
-                    base_peak_intensity: None,
-                    low_mz: None,
-                    high_mz: None,
-                    ion_injection_time_ms: None,
-                    inv_mobility: None,
-                    faims_cv: None, // GC-MS instruments have no FAIMS interface.
-                    precursor: None,
-                    mz,
-                    intensity,
-                    inv_mobility_per_peak: None,
-                });
+                // No polarity bit is known in the 32-byte scan header or
+                // Spectrum Index; left unpopulated rather than assumed.
+                // GC-MS instruments have no FAIMS interface.
+                let rec = SpectrumRecord::new(
+                    out.next_index(),
+                    id as u32,
+                    format!("source={stem} start={id} end={id}"),
+                )
+                .with_ms_level(1)
+                .with_scan_mode(ScanMode::Profile)
+                .with_analyzer(Analyzer::SQMS)
+                .with_retention_time_sec(rt_sec)
+                .with_peaks(mz, intensity);
+                out.records.push(Ok(rec));
             }
             qgd::QgdScan::Mrm {
                 event_id,
@@ -435,46 +466,29 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
                 ..
             } => {
                 for (k, t) in transitions.into_iter().enumerate() {
-                    let idx = out.len();
                     let id = first_slot + k + 1;
-                    out.push(SpectrumRecord {
-                        extra: ::std::collections::BTreeMap::new(),
-                        acquisition_event_id: Some(event_id as u32),
-                        index: idx,
-                        scan_number: id as u32,
-                        native_id: format!("source={stem} start={id} end={id}"),
-                        ms_level: 2,
-                        polarity: None,
-                        scan_mode: Some(ScanMode::Centroid),
-                        analyzer: Some(Analyzer::TQMS),
-                        filter: None,
-                        retention_time_sec: rt_sec,
-                        total_ion_current: None,
-                        base_peak_mz: None,
-                        base_peak_intensity: None,
-                        low_mz: None,
-                        high_mz: None,
-                        ion_injection_time_ms: None,
-                        inv_mobility: None,
-                        faims_cv: None,
-                        precursor: Some(PrecursorInfo {
-                            target_mz: Some(t.precursor_mz),
-                            selected_mz: Some(t.precursor_mz),
-                            ..Default::default()
-                        }),
-                        mz: vec![t.product_mz],
-                        intensity: vec![t.intensity],
-                        inv_mobility_per_peak: None,
-                    });
+                    let rec = SpectrumRecord::new(
+                        out.next_index(),
+                        id as u32,
+                        format!("source={stem} start={id} end={id}"),
+                    )
+                    .with_acquisition_event_id(event_id as u32)
+                    .with_ms_level(2)
+                    .with_scan_mode(ScanMode::Centroid)
+                    .with_analyzer(Analyzer::TQMS)
+                    .with_retention_time_sec(rt_sec)
+                    .with_precursor(
+                        PrecursorInfo::default()
+                            .with_target_mz(t.precursor_mz)
+                            .with_selected_mz(t.precursor_mz),
+                    )
+                    .with_peaks(vec![t.product_mz], vec![t.intensity]);
+                    out.records.push(Ok(rec));
                 }
             }
         }
     }
-    BuiltSpectra {
-        spectra: out,
-        skipped,
-        missing_rt,
-    }
+    out
 }
 
 /// Build spectra for the `.lcd` single-quadrupole variant. Every scan is
@@ -483,9 +497,7 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
 /// `docs/format/07-mass-raw-data-single-quad.md`.
 fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> BuiltSpectra {
     let n = offsets.len();
-    let mut out = Vec::with_capacity(n);
-    let mut skipped = 0;
-    let missing_rt = 0;
+    let mut out = BuiltSpectra::with_capacity(n);
     for i in 0..n {
         let start = offsets[i] as usize;
         let end = if i + 1 < n {
@@ -494,63 +506,42 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> BuiltSpect
             ms_raw.len()
         };
         if start > end || end > ms_raw.len() {
-            skipped += 1;
-            log_skip(
+            out.push_err(
                 "single-quad",
-                stem,
                 i,
-                &format_args!("offset range {start}..{end} outside MS Raw Data"),
+                format_args!("offset range {start}..{end} outside MS Raw Data"),
             );
             continue;
         }
         let scan = match mass_raw::parse_scan(&ms_raw[start..end]) {
             Ok(s) => s,
             Err(e) => {
-                skipped += 1;
-                log_skip("single-quad", stem, i, &e);
+                out.push_err("single-quad", i, e);
                 continue;
             }
         };
-        let idx = out.len();
         let id = i + 1;
-        out.push(SpectrumRecord {
-            extra: ::std::collections::BTreeMap::new(),
-            acquisition_event_id: None,
-            index: idx,
-            scan_number: id as u32,
-            native_id: format!("source={stem} start={id} end={id}"),
-            ms_level: 1,
-            // A per-scan header field alternates between exactly 2
-            // values with strict scan-parity regularity (1,200/1,200
-            // over 2,400 scans in every corpus file), plausibly a
-            // polarity-switching flag - but with no confirmed mapping to
-            // a specific `Polarity` value, so left unpopulated rather
-            // than guessed, same treatment as the TTFL channel-mode flag
-            // (see `docs/format/06-known-limitations.md`).
-            polarity: None,
-            scan_mode: Some(ScanMode::Profile),
-            analyzer: Some(Analyzer::SQMS),
-            filter: None,
-            retention_time_sec: scan.retention_time_ms as f64 / 1000.0,
-            total_ion_current: None,
-            base_peak_mz: None,
-            base_peak_intensity: None,
-            low_mz: None,
-            high_mz: None,
-            ion_injection_time_ms: None,
-            inv_mobility: None,
-            faims_cv: None, // Shimadzu single-quad LC-MS instruments have no FAIMS interface.
-            precursor: None,
-            mz: scan.mz,
-            intensity: scan.intensity,
-            inv_mobility_per_peak: None,
-        });
+        // Polarity: a per-scan header field alternates between exactly 2
+        // values with strict scan-parity regularity (1,200/1,200 over
+        // 2,400 scans in every corpus file), plausibly a
+        // polarity-switching flag - but with no confirmed mapping to a
+        // specific `Polarity` value, so left unpopulated rather than
+        // guessed, same treatment as the TTFL channel-mode flag (see
+        // `docs/format/06-known-limitations.md`). Shimadzu single-quad
+        // LC-MS instruments have no FAIMS interface.
+        let rec = SpectrumRecord::new(
+            out.next_index(),
+            id as u32,
+            format!("source={stem} start={id} end={id}"),
+        )
+        .with_ms_level(1)
+        .with_scan_mode(ScanMode::Profile)
+        .with_analyzer(Analyzer::SQMS)
+        .with_retention_time_sec(scan.retention_time_ms as f64 / 1000.0)
+        .with_peaks(scan.mz, scan.intensity);
+        out.records.push(Ok(rec));
     }
-    BuiltSpectra {
-        spectra: out,
-        skipped,
-        missing_rt,
-    }
+    out
 }
 
 /// Build spectra for the `.lcd` QTOF variant. `event_id == 1` is treated
@@ -562,15 +553,12 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> BuiltSpect
 /// only carry a `precursor_native_id` referencing the MS1 scan with the
 /// same `cycle_index` - see `docs/format/06-known-limitations.md`.
 fn qtfl_spectra(
-    stem: &str,
     centroid_data: &[u8],
     records: &[qtfl::CentroidIndexRecord],
     retention_time_ms: &[u32],
 ) -> BuiltSpectra {
     let n = records.len();
-    let mut out = Vec::with_capacity(n);
-    let mut skipped = 0;
-    let mut missing_rt = 0;
+    let mut out = BuiltSpectra::with_capacity(n);
     let mut ms1_native_id_by_cycle = std::collections::HashMap::new();
     for i in 0..n {
         let start = records[i].offset as usize;
@@ -580,79 +568,48 @@ fn qtfl_spectra(
             centroid_data.len()
         };
         if start > end || end > centroid_data.len() {
-            skipped += 1;
-            log_skip(
+            out.push_err(
                 "QTOF",
-                stem,
                 i,
-                &format_args!("offset range {start}..{end} outside Centroid Data"),
+                format_args!("offset range {start}..{end} outside Centroid Data"),
             );
             continue;
         }
         let spec = match qtfl::decode_scan(&centroid_data[start..end]) {
             Ok(s) => s,
             Err(e) => {
-                skipped += 1;
-                log_skip("QTOF", stem, i, &e);
+                out.push_err("QTOF", i, e);
                 continue;
             }
         };
         let rt_ms = retention_time_ms.get(i).copied().unwrap_or_else(|| {
-            missing_rt += 1;
+            out.missing_rt += 1;
             0
         });
         let is_ms1 = records[i].event_id <= 1;
-        let idx = out.len();
         let id = i + 1;
         let native_id = format!("scan={id}");
         if is_ms1 {
             ms1_native_id_by_cycle.insert(records[i].cycle_index, native_id.clone());
         }
-        let mut extra = ::std::collections::BTreeMap::new();
-        extra.insert(
-            "openszraw.cycle_index".to_string(),
-            records[i].cycle_index.to_string(),
-        );
-        out.push(SpectrumRecord {
-            extra,
-            acquisition_event_id: Some(records[i].event_id),
-            index: idx,
-            scan_number: id as u32,
-            native_id,
-            ms_level: if is_ms1 { 1 } else { 2 },
-            polarity: None,
-            scan_mode: Some(ScanMode::Centroid),
-            analyzer: Some(Analyzer::TOFMS),
-            filter: None,
-            retention_time_sec: rt_ms as f64 / 1000.0,
-            total_ion_current: None,
-            base_peak_mz: None,
-            base_peak_intensity: spec.base_peak_intensity,
-            low_mz: None,
-            high_mz: None,
-            ion_injection_time_ms: None,
-            inv_mobility: None,
-            faims_cv: None, // Shimadzu QTOF instruments have no FAIMS interface.
-            precursor: if is_ms1 {
-                None
-            } else {
-                Some(PrecursorInfo {
-                    precursor_native_id: ms1_native_id_by_cycle
-                        .get(&records[i].cycle_index)
-                        .cloned(),
-                    ..Default::default()
-                })
-            },
-            mz: spec.mz,
-            intensity: spec.intensity,
-            inv_mobility_per_peak: None,
-        });
+        // Shimadzu QTOF instruments have no FAIMS interface.
+        let mut rec = SpectrumRecord::new(out.next_index(), id as u32, native_id)
+            .with_extra("openszraw.cycle_index", records[i].cycle_index.to_string())
+            .with_acquisition_event_id(records[i].event_id)
+            .with_ms_level(if is_ms1 { 1 } else { 2 })
+            .with_scan_mode(ScanMode::Centroid)
+            .with_analyzer(Analyzer::TOFMS)
+            .with_retention_time_sec(rt_ms as f64 / 1000.0)
+            .with_base_peak_intensity(spec.base_peak_intensity)
+            .with_peaks(spec.mz, spec.intensity);
+        if !is_ms1 {
+            rec = rec.with_precursor(PrecursorInfo::default().with_precursor_native_id(
+                ms1_native_id_by_cycle.get(&records[i].cycle_index).cloned(),
+            ));
+        }
+        out.records.push(Ok(rec));
     }
-    BuiltSpectra {
-        spectra: out,
-        skipped,
-        missing_rt,
-    }
+    out
 }
 
 /// Build spectra for the `.lcd` IT-TOF variant. Each `(entry, channel)`
@@ -674,91 +631,78 @@ fn ttfl_spectra(
     retention_time_ms: &[u32],
     calibration: Option<&ttfl::Calibration>,
 ) -> BuiltSpectra {
-    let mut out = Vec::with_capacity(subsets.len());
-    let mut skipped = 0;
-    let mut missing_rt = 0;
+    let mut out = BuiltSpectra::with_capacity(subsets.len());
     for (i, (subset, &(start, end))) in subsets.iter().zip(bounds.iter()).enumerate() {
         let start = start as usize;
         let end = end as usize;
         if start > end || end > ms_raw.len() {
-            skipped += 1;
-            log_skip(
+            out.push_err(
                 "IT-TOF",
-                stem,
                 i,
-                &format_args!("offset range {start}..{end} outside MS Raw Data"),
+                format_args!("offset range {start}..{end} outside MS Raw Data"),
             );
             continue;
         }
         let Some(spec) = ttfl::decode_scan(&ms_raw[start..end]) else {
-            skipped += 1;
-            log_skip("IT-TOF", stem, i, &"no clean RLE payload boundary");
+            out.push_err("IT-TOF", i, "no clean RLE payload boundary");
             continue;
         };
         let rt_ms = retention_time_ms
             .get(subset.entry_i)
             .copied()
             .unwrap_or_else(|| {
-                missing_rt += 1;
+                out.missing_rt += 1;
                 0
             });
-        let idx = out.len();
         let id = i + 1;
         let mz = match calibration {
             Some(cal) => spec.index_axis.iter().map(|&i| cal.mz(i)).collect(),
             None => spec.index_axis,
         };
-        let mut extra = ::std::collections::BTreeMap::new();
-        extra.insert(
-            "openszraw.entry_index".to_string(),
-            subset.entry_i.to_string(),
-        );
-        extra.insert(
-            "openszraw.channel_index".to_string(),
-            subset.sub_i.to_string(),
-        );
-        out.push(SpectrumRecord {
-            extra,
-            acquisition_event_id: None,
-            index: idx,
-            scan_number: id as u32,
-            native_id: format!("source={stem} start={id} end={id}"),
-            ms_level: 1,
-            // Neither polarity nor MS-level is recoverable per channel:
-            // the header's `u32[5]` mode flag is not confirmed to map to a specific polarity/level assignment -
-            // see docs/format/06-known-limitations.md.
-            polarity: None,
-            scan_mode: Some(ScanMode::Profile),
-            analyzer: Some(Analyzer::TOFMS),
-            filter: None,
-            retention_time_sec: rt_ms as f64 / 1000.0,
-            total_ion_current: None,
-            base_peak_mz: None,
-            base_peak_intensity: None,
-            low_mz: None,
-            high_mz: None,
-            ion_injection_time_ms: None,
-            inv_mobility: None,
-            faims_cv: None, // Shimadzu IT-TOF instruments have no FAIMS interface.
-            precursor: None,
-            mz,
-            intensity: spec.intensity,
-            inv_mobility_per_peak: None,
-        });
+        // Neither polarity nor MS level is recoverable per channel: the
+        // header's `u32[5]` mode flag is not confirmed to map to a
+        // specific polarity/level assignment - see
+        // docs/format/06-known-limitations.md. Shimadzu IT-TOF
+        // instruments have no FAIMS interface.
+        let rec = SpectrumRecord::new(
+            out.next_index(),
+            id as u32,
+            format!("source={stem} start={id} end={id}"),
+        )
+        .with_extra("openszraw.entry_index", subset.entry_i.to_string())
+        .with_extra("openszraw.channel_index", subset.sub_i.to_string())
+        .with_ms_level(1)
+        .with_scan_mode(ScanMode::Profile)
+        .with_analyzer(Analyzer::TOFMS)
+        .with_retention_time_sec(rt_ms as f64 / 1000.0)
+        .with_peaks(mz, spec.intensity);
+        out.records.push(Ok(rec));
     }
-    BuiltSpectra {
-        spectra: out,
-        skipped,
-        missing_rt,
-    }
+    out
+}
+
+/// `RunMetadata` with the fields every variant shares.
+fn base_metadata(
+    source_file_name: String,
+    source_file_format: CvTerm,
+    native_id_format: CvTerm,
+    instrument: CvTerm,
+) -> RunMetadata {
+    RunMetadata::new(
+        source_file_name,
+        source_file_format,
+        native_id_format,
+        instrument,
+        "openszraw",
+        env!("CARGO_PKG_VERSION"),
+    )
 }
 
 impl SpectrumSource for Reader {
     fn run_metadata(&self) -> RunMetadata {
-        let mut metadata = match self.variant {
-            Variant::Qgd => RunMetadata {
-                extra: ::std::collections::BTreeMap::new(),
-                source_file_name: format!("{}.qgd", self.stem),
+        let metadata = match self.variant {
+            Variant::Qgd => base_metadata(
+                format!("{}.qgd", self.stem),
                 // No dedicated PSI-MS CV term for GCMSsolution's .qgd
                 // format exists in psi-ms.obo (checked against
                 // data-version 4.1.249: the only Shimadzu file-format
@@ -767,64 +711,34 @@ impl SpectrumSource for Reader {
                 // generic parent node itself, with its exact OBO name -
                 // mzML validators reject an accession paired with any
                 // other name.
-                source_file_format: CvTerm::new("MS:1000560", "mass spectrometer file format"),
-                native_id_format: CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
-                instrument: CvTerm::new("MS:1000124", "Shimadzu instrument model"),
-                instrument_serial_number: None,
-                software_name: "openszraw".to_string(),
-                software_version: env!("CARGO_PKG_VERSION").to_string(),
-                acquisition_software_name: None,
-                acquisition_software_version: None,
-                start_timestamp: self.start_timestamp.clone(),
-                mobility_array_kind: None,
-                analyzers: Vec::new(),
-            },
-            Variant::Qtfl => RunMetadata {
-                extra: ::std::collections::BTreeMap::new(),
-                source_file_name: format!("{}.lcd", self.stem),
-                source_file_format: CvTerm::new("MS:1003009", "Shimadzu Biotech LCD format"),
-                native_id_format: CvTerm::new(
-                    "MS:1002898",
-                    "Shimadzu Biotech QTOF nativeID format",
-                ),
+                CvTerm::new("MS:1000560", "mass spectrometer file format"),
+                CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
+                CvTerm::new("MS:1000124", "Shimadzu instrument model"),
+            ),
+            Variant::Qtfl => base_metadata(
+                format!("{}.lcd", self.stem),
+                CvTerm::new("MS:1003009", "Shimadzu Biotech LCD format"),
+                CvTerm::new("MS:1002898", "Shimadzu Biotech QTOF nativeID format"),
                 // MS:1002998 "LCMS-9030" is Shimadzu's only Q-TOF product
                 // (per psi-ms.obo); justified by the `QTFL RawData`
                 // storage itself (this format family) plus the corpus
                 // file's own `GUMM_Information/ShimadzuLCMS-Q-TOF.1`
                 // substream, not by filename.
-                instrument: CvTerm::new("MS:1002998", "LCMS-9030"),
-                instrument_serial_number: None,
-                software_name: "openszraw".to_string(),
-                software_version: env!("CARGO_PKG_VERSION").to_string(),
-                acquisition_software_name: None,
-                acquisition_software_version: None,
-                start_timestamp: self.start_timestamp.clone(),
-                mobility_array_kind: None,
-                analyzers: Vec::new(),
-            },
-            Variant::Ttfl => RunMetadata {
-                extra: ::std::collections::BTreeMap::new(),
-                source_file_name: format!("{}.lcd", self.stem),
-                source_file_format: CvTerm::new("MS:1003009", "Shimadzu Biotech LCD format"),
-                native_id_format: CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
+                CvTerm::new("MS:1002998", "LCMS-9030"),
+            ),
+            Variant::Ttfl => base_metadata(
+                format!("{}.lcd", self.stem),
+                CvTerm::new("MS:1003009", "Shimadzu Biotech LCD format"),
+                CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
                 // MS:1000604 "LCMS-IT-TOF" is justified directly by the
                 // `TTFL Raw Data` storage (this format family is
                 // IT-TOF-specific hardware).
-                instrument: CvTerm::new("MS:1000604", "LCMS-IT-TOF"),
-                instrument_serial_number: None,
-                software_name: "openszraw".to_string(),
-                software_version: env!("CARGO_PKG_VERSION").to_string(),
-                acquisition_software_name: None,
-                acquisition_software_version: None,
-                start_timestamp: self.start_timestamp.clone(),
-                mobility_array_kind: None,
-                analyzers: Vec::new(),
-            },
-            Variant::SingleQuad => RunMetadata {
-                extra: ::std::collections::BTreeMap::new(),
-                source_file_name: format!("{}.lcd", self.stem),
-                source_file_format: CvTerm::new("MS:1003009", "Shimadzu Biotech LCD format"),
-                native_id_format: CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
+                CvTerm::new("MS:1000604", "LCMS-IT-TOF"),
+            ),
+            Variant::SingleQuad => base_metadata(
+                format!("{}.lcd", self.stem),
+                CvTerm::new("MS:1003009", "Shimadzu Biotech LCD format"),
+                CvTerm::new("MS:1000929", "Shimadzu Biotech nativeID format"),
                 // No dedicated PSI-MS CV term for a specific single-quad
                 // Shimadzu LC-MS model (e.g. LCMS-2020) was found in
                 // psi-ms.obo; the `Mass Raw Data` storage confirms this
@@ -832,32 +746,20 @@ impl SpectrumSource for Reader {
                 // exact model, so this falls back to the generic
                 // Shimadzu instrument node rather than assume a specific
                 // model from a filename or study metadata.
-                instrument: CvTerm::new("MS:1000124", "Shimadzu instrument model"),
-                instrument_serial_number: None,
-                software_name: "openszraw".to_string(),
-                software_version: env!("CARGO_PKG_VERSION").to_string(),
-                acquisition_software_name: None,
-                acquisition_software_version: None,
-                start_timestamp: self.start_timestamp.clone(),
-                mobility_array_kind: None,
-                analyzers: Vec::new(),
-            },
+                CvTerm::new("MS:1000124", "Shimadzu instrument model"),
+            ),
         };
-        metadata.extra.insert(
-            "openszraw.variant".to_string(),
-            format!("{:?}", self.variant).to_ascii_lowercase(),
-        );
+        let mut metadata = metadata
+            .with_start_timestamp(self.start_timestamp.clone())
+            .with_extra("openszraw.variant", self.variant.as_str());
         if let Decoded::Ttfl {
             calibration: Some(cal),
             ..
         } = &self.decoded
         {
-            metadata
-                .extra
-                .insert("openszraw.calibration_a".to_string(), cal.a.to_string());
-            metadata
-                .extra
-                .insert("openszraw.calibration_b".to_string(), cal.b.to_string());
+            metadata = metadata
+                .with_extra("openszraw.calibration_a", cal.a.to_string())
+                .with_extra("openszraw.calibration_b", cal.b.to_string());
         }
         metadata
     }
@@ -873,14 +775,19 @@ impl SpectrumSource for Reader {
         }
     }
 
-    fn iter_spectra<'a>(&'a mut self) -> Box<dyn Iterator<Item = SpectrumRecord> + 'a> {
+    /// Spectra in source order. A source scan that cannot be decoded is
+    /// an `Err` item (an [`crate::Error::ScanDecode`] wrapped in
+    /// [`openmassspec_core::Error::Vendor`]) at its position; iteration
+    /// continues with the next scan. `index` counts `Ok` items only, and
+    /// [`Reader::skipped_scans`] reports the number of `Err` items.
+    fn iter_spectra<'a>(&'a mut self) -> SpectrumIter<'a> {
         let built = match &self.decoded {
             Decoded::Qgd { ms_raw, offsets } => qgd_spectra(&self.stem, ms_raw, offsets),
             Decoded::Qtfl {
                 centroid_data,
                 records,
                 retention_time_ms,
-            } => qtfl_spectra(&self.stem, centroid_data, records, retention_time_ms),
+            } => qtfl_spectra(centroid_data, records, retention_time_ms),
             Decoded::Ttfl {
                 ms_raw,
                 subsets,
@@ -907,14 +814,12 @@ impl SpectrumSource for Reader {
                 built.missing_rt
             );
         }
-        if built.skipped > 0 {
-            log::warn!(
-                "openszraw: {}: skipped {} undecodable source scan(s); enable debug logging for details",
-                self.stem,
-                built.skipped
-            );
-        }
-        Box::new(built.spectra.into_iter())
+        Box::new(
+            built
+                .records
+                .into_iter()
+                .map(|r| r.map_err(openmassspec_core::Error::from)),
+        )
     }
 
     /// Chromatogram traces decoded from `LC Raw Data/Chromatogram ChN`
@@ -923,31 +828,31 @@ impl SpectrumSource for Reader {
     /// are both present and cleanly decodable - most files in this
     /// crate's scope, since this data has only been confirmed populated
     /// on IT-TOF `.lcd` files in the local corpus.
-    fn iter_chromatograms<'a>(&'a mut self) -> Box<dyn Iterator<Item = ChromatogramRecord> + 'a> {
+    fn iter_chromatograms<'a>(&'a mut self) -> ChromatogramIter<'a> {
         let records: Vec<ChromatogramRecord> = self
             .lc_chromatograms
             .iter()
             .enumerate()
-            .map(|(index, (id, chrom))| ChromatogramRecord {
-                index,
-                id: id.clone(),
+            .map(|(index, (id, chrom))| {
+                ChromatogramRecord::new(
+                    index,
+                    id.clone(),
+                    chrom.time_sec.clone(),
+                    chrom.intensity.clone(),
+                )
                 // PSI-MS MS:1000811 "electromagnetic radiation
                 // chromatogram" is the standard term for a conventional
                 // (non-MS) LC detector trace such as UV/RID - not
                 // MS:1000235 "total ion current chromatogram", which
-                // `ChromatogramRecord::chromatogram_type: None` would
-                // default to in the mzML writer.
-                chromatogram_type: Some(CvTerm::new(
+                // `chromatogram_type: None` would default to in the mzML
+                // writer.
+                .with_chromatogram_type(CvTerm::new(
                     "MS:1000811",
                     "electromagnetic radiation chromatogram",
-                )),
-                precursor_mz: None,
-                product_mz: None,
-                time_sec: chrom.time_sec.clone(),
-                intensity: chrom.intensity.clone(),
+                ))
             })
             .collect();
-        Box::new(records.into_iter())
+        Box::new(records.into_iter().map(Ok))
     }
 }
 
@@ -1023,7 +928,7 @@ mod tests {
             },
         ];
 
-        let spectra = qtfl_spectra("test", &centroid_data, &records, &[100, 200, 300]).spectra;
+        let spectra = qtfl_spectra(&centroid_data, &records, &[100, 200, 300]).spectra();
         assert_eq!(spectra.len(), 3);
         assert_eq!(spectra[0].acquisition_event_id, Some(1));
         assert_eq!(spectra[2].acquisition_event_id, Some(2));
@@ -1059,7 +964,7 @@ mod tests {
             buf.extend_from_slice(&i.to_le_bytes());
         }
 
-        let spectra = qgd_spectra("test", &buf, &[0]).spectra;
+        let spectra = qgd_spectra("test", &buf, &[0]).spectra();
         assert_eq!(spectra.len(), 2);
         assert_eq!(spectra[0].acquisition_event_id, Some(102));
         assert_eq!(spectra[1].acquisition_event_id, Some(102));
@@ -1114,7 +1019,7 @@ mod tests {
         let built = qgd_spectra("f", &data, &offsets);
         assert_eq!(built.skipped, 1);
         assert_eq!(
-            ids(&built.spectra),
+            ids(&built.spectra()),
             vec![
                 (0, 1, "source=f start=1 end=1".to_string()),
                 (1, 3, "source=f start=3 end=3".to_string()),
@@ -1133,9 +1038,9 @@ mod tests {
         ]);
         let built = qgd_spectra("f", &data, &offsets);
         assert_eq!(built.skipped, 1);
-        let numbers: Vec<u32> = built.spectra.iter().map(|s| s.scan_number).collect();
+        let numbers: Vec<u32> = built.spectra().iter().map(|s| s.scan_number).collect();
         assert_eq!(numbers, vec![1, 2, 6, 7]);
-        let indices: Vec<usize> = built.spectra.iter().map(|s| s.index).collect();
+        let indices: Vec<usize> = built.spectra().iter().map(|s| s.index).collect();
         assert_eq!(indices, vec![0, 1, 2, 3]);
     }
 
@@ -1146,7 +1051,43 @@ mod tests {
         // Scan 0 runs to offset 10_000 (past the end): skipped. Scan 1
         // starts past the end: skipped too.
         assert_eq!(built.skipped, 2);
-        assert!(built.spectra.is_empty());
+        assert!(built.spectra().is_empty());
+    }
+
+    #[test]
+    fn undecodable_scan_is_an_err_item_at_its_source_position() {
+        let bad = vec![0u8; 8]; // too short for a header
+        let (data, offsets) = concat(&[qgd_profile_scan(), bad, qgd_profile_scan()]);
+        let built = qgd_spectra("f", &data, &offsets);
+        assert_eq!(built.records.len(), 3);
+        assert!(built.records[0].is_ok());
+        assert!(built.records[2].is_ok());
+        match &built.records[1] {
+            Err(crate::Error::ScanDecode { source_index, .. }) => assert_eq!(*source_index, 1),
+            other => panic!("expected ScanDecode at position 1, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scan_decode_error_converts_to_core_vendor_error() {
+        let e = crate::Error::ScanDecode {
+            source_index: 4,
+            message: "QTOF: bad".into(),
+        };
+        let core: openmassspec_core::Error = e.into();
+        let openmassspec_core::Error::Vendor(inner) = core else {
+            panic!("expected Vendor");
+        };
+        let inner = inner
+            .downcast_ref::<crate::Error>()
+            .expect("downcast to openszraw::Error");
+        assert!(matches!(
+            inner,
+            crate::Error::ScanDecode {
+                source_index: 4,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1163,7 +1104,7 @@ mod tests {
         let built = single_quad_spectra("f", &data, &offsets);
         assert_eq!(built.skipped, 1);
         assert_eq!(
-            ids(&built.spectra),
+            ids(&built.spectra()),
             vec![
                 (0, 1, "source=f start=1 end=1".to_string()),
                 (1, 3, "source=f start=3 end=3".to_string()),
@@ -1182,10 +1123,10 @@ mod tests {
             event_id: 1,
         };
         let records = vec![rec(0, 1), rec(h, 2), rec(h + 4, 3)];
-        let built = qtfl_spectra("f", &centroid_data, &records, &[1, 2, 3]);
+        let built = qtfl_spectra(&centroid_data, &records, &[1, 2, 3]);
         assert_eq!(built.skipped, 1);
         assert_eq!(
-            ids(&built.spectra),
+            ids(&built.spectra()),
             vec![(0, 1, "scan=1".to_string()), (1, 3, "scan=3".to_string())]
         );
     }
@@ -1205,7 +1146,7 @@ mod tests {
         let built = ttfl_spectra("f", &ms_raw, &subsets, &bounds, &[1, 2, 3], None);
         assert_eq!(built.skipped, 1);
         assert_eq!(
-            ids(&built.spectra),
+            ids(&built.spectra()),
             vec![
                 (0, 1, "source=f start=1 end=1".to_string()),
                 (1, 3, "source=f start=3 end=3".to_string()),

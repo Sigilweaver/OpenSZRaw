@@ -114,7 +114,10 @@ fn qgd_profile_peaks_are_plausible() {
     let Some(mut reader) = open_or_skip(&qgd_profile_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     assert!(!spectra.is_empty());
     assert!(spectra.iter().all(|s| s.ms_level == 1));
 
@@ -167,7 +170,10 @@ fn qgd_mrm_transitions_are_plausible() {
     let Some(mut reader) = open_or_skip(&qgd_mrm_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     assert!(!spectra.is_empty());
     assert!(spectra.iter().all(|s| s.ms_level == 2));
     assert!(spectra
@@ -207,7 +213,10 @@ fn qtfl_centroid_mz_is_plausible_and_has_ms2() {
     let Some(mut reader) = open_or_skip(&qtfl_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     assert!(!spectra.is_empty());
 
     let has_ms1 = spectra.iter().any(|s| s.ms_level == 1);
@@ -276,7 +285,10 @@ fn ttfl_mz_is_calibrated_finite_and_nonnegative() {
     let Some(mut reader) = open_or_skip(&ttfl_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     assert!(!spectra.is_empty());
     assert!(spectra.iter().all(|s| s.ms_level == 1));
 
@@ -307,7 +319,10 @@ fn ttfl_base_peak_mz_is_plausible_for_most_scans() {
     let Some(mut reader) = open_or_skip(&ttfl_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     let base_peaks: Vec<f64> = spectra
         .iter()
         .filter_map(|s| {
@@ -341,7 +356,10 @@ fn ttfl_lc_chromatogram_ch6_decodes_and_is_plausible() {
     let Some(mut reader) = open_or_skip(&ttfl_lc_chromatogram_fixture()) else {
         return;
     };
-    let chroms: Vec<_> = reader.iter_chromatograms().collect();
+    let chroms: Vec<_> = reader
+        .iter_chromatograms()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every chromatogram decodes");
     assert_eq!(
         chroms.len(),
         1,
@@ -384,7 +402,10 @@ fn ttfl_lc_chromatogram_ch5_is_not_emitted() {
     let Some(mut reader) = open_or_skip(&ttfl_lc_chromatogram_fixture()) else {
         return;
     };
-    let chroms: Vec<_> = reader.iter_chromatograms().collect();
+    let chroms: Vec<_> = reader
+        .iter_chromatograms()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every chromatogram decodes");
     assert!(
         chroms.iter().all(|c| !c.id.ends_with("Ch5")),
         "Ch5 should not be emitted (single repeated value, grammar untestable)"
@@ -413,7 +434,10 @@ fn single_quad_peaks_are_plausible() {
     let Some(mut reader) = open_or_skip(&single_quad_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     assert!(!spectra.is_empty());
     assert!(spectra.iter().all(|s| s.ms_level == 1));
 

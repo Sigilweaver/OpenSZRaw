@@ -14,7 +14,11 @@ use cfb::CompoundFile;
 /// The four on-disk variants this crate can decode, detected at `open()`
 /// time - see `docs/format/01-ole2-container.md` and the crate root doc
 /// comment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `#[non_exhaustive]`: more `.lcd` families (for example triple
+/// quadrupole) may be added in a minor release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Variant {
     /// `.qgd` GCMSsolution GC-MS data (`GCMS Raw Data` storage).
     Qgd,
@@ -26,6 +30,20 @@ pub enum Variant {
     /// Shimadzu LCMS-2020) - see
     /// `docs/format/07-mass-raw-data-single-quad.md`.
     SingleQuad,
+}
+
+impl Variant {
+    /// Stable lowercase label: `"qgd"`, `"ttfl"`, `"qtfl"` or
+    /// `"singlequad"`. Used for the `openszraw.variant` run-metadata
+    /// extra and the Python `RawReader.variant` property.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Variant::Qgd => "qgd",
+            Variant::Ttfl => "ttfl",
+            Variant::Qtfl => "qtfl",
+            Variant::SingleQuad => "singlequad",
+        }
+    }
 }
 
 /// Root CFBF storage name for each variant.

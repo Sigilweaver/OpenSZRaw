@@ -45,7 +45,8 @@ codes:
 Scan size validates exactly as `32 + N_Peaks * (2 + width)` bytes.
 Summed intensities match the file's own `TIC Data` stream for every
 profile scan in the local corpus. A scan with an unknown `Format` code
-is skipped and counted in `Reader::skipped_scans`.
+is reported as an `Err` item by `iter_spectra` and counted in
+`Reader::skipped_scans`.
 
 ## MRM / targeted mode
 

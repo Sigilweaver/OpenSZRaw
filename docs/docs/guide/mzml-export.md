@@ -18,6 +18,11 @@ let mut out = std::fs::File::create("output.mzML")?;
 write_mzml(&mut reader, &mut out)?;
 ```
 
+`write_mzml` stops at the first spectrum that cannot be decoded and
+returns its error. To write the rest and count the failures instead,
+use `write_mzml_with_options` with `RecordErrorPolicy::Skip` and check
+the returned `WriteSummary`.
+
 `write_mzml` iterates the reader's spectra via `SpectrumSource` (the same
 stream described in [Reader](./reader)) and emits PSI-MS CV-annotated
 mzML, with the source-file-format and instrument CV terms varying by

@@ -31,3 +31,6 @@ def test_decoded_fields():
     assert len(first.mz) == len(first.intensity)
     for chrom in reader.read_chromatograms():
         assert len(chrom["time_sec"]) == len(chrom["intensity"])
+    lenient = openszraw.RawReader(str(path), skip_errors=True)
+    assert lenient.scan_count + lenient.skipped_scans >= reader.scan_count
+    assert next(openszraw.iter_spectra(str(path), skip_errors=True)).native_id == first.native_id

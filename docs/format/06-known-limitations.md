@@ -154,8 +154,8 @@ Profile scans with header `Format` code `1` (4-byte intensities, seen in
 intensities match the file's `TIC Data` only with that bit cleared, so
 the reader clears it. It is consistent with a saturation marker but its
 meaning is not confirmed, and it is not surfaced. Scans with any `Format`
-code other than `0` (MRM), `1`, `2`, or `3` are skipped and counted in
-`Reader::skipped_scans`.
+code other than `0` (MRM), `1`, `2`, or `3` are reported as `Err` items
+by `iter_spectra` and counted in `Reader::skipped_scans`.
 
 ## 9. Acquisition `start_timestamp` is a container-creation proxy
 

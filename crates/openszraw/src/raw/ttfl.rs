@@ -309,7 +309,11 @@ pub struct TtflSpectrum {
 /// the RLE payload's index convention (cumulative `skip` from 0 at the
 /// start of that scan's RLE stream) and the tuning stream's own time
 /// convention - see the caveat on `Calibration::mz`.
+///
+/// `#[non_exhaustive]`: read `a` / `b` directly; values are only built
+/// by this crate.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct Calibration {
     /// Slope in `time = a*sqrt(mz) + b`.
     pub a: f64,

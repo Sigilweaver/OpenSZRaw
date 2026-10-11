@@ -29,11 +29,19 @@ println!("{} ({} scans)", metadata.source_file_name, scan_count);
 
 let mut reader = reader;
 for spectrum in reader.iter_spectra() {
+    let spectrum = spectrum?;
     println!("{}\t{}\t{} peaks", spectrum.native_id, spectrum.ms_level, spectrum.mz.len());
 }
 ```
 
-Each yielded `SpectrumRecord` carries `index`, `native_id`, `ms_level`,
+`iter_spectra` yields `openmassspec_core::Result<SpectrumRecord>`. A
+source scan that cannot be decoded is an `Err` item at its position and
+iteration continues with the next scan; `Reader::skipped_scans()` counts
+them. Errors never renumber later scans: `scan_number` and `native_id`
+come from the file's own scan index, and `index` counts decoded spectra
+only.
+
+Each decoded `SpectrumRecord` carries `index`, `native_id`, `ms_level`,
 `retention_time_sec`, and `mz`/`intensity` arrays. `spectrum_count_hint`
 is exact for `.lcd` IT-TOF and QTOF, but only approximate for `.qgd` MRM
 data: each monitored transition within a scan expands into its own
@@ -60,5 +68,8 @@ for MRM/targeted acquisitions - see
 ## Error handling
 
 Public functions return `openszraw::Result<T>`. The error type is
-`openszraw::Error`, which wraps the failure category (`Io`, `Parse`) and
-a message.
+`openszraw::Error`, which wraps the failure category (`Io`, `Parse`,
+`ScanDecode`) and a message. It is `#[non_exhaustive]`, so match it with
+a wildcard arm. Inside `iter_spectra` items it arrives wrapped in
+`openmassspec_core::Error::Vendor`; downcast the boxed error to
+`openszraw::Error` to inspect it.
