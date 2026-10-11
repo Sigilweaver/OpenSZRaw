@@ -20,9 +20,9 @@ Documentation: [sigilweaver.app/openszraw/docs](https://sigilweaver.app/openszra
 
 ## Known issues and gaps
 
-These apply to the published releases (openszraw 0.2.0 and earlier) and to
-current `main`. Figures come from checks run on the public validation
-corpus (see [CORPUS.md](CORPUS.md)).
+These apply to openszraw 0.3.0 and all earlier releases. Figures come
+from checks run on the public validation corpus (see
+[CORPUS.md](https://github.com/Sigilweaver/OpenSZRaw/blob/main/CORPUS.md)).
 
 - **LC-MS QTOF (`.lcd`, LCMS-9030) m/z values are wrong.** Intensities
   decode correctly, but the m/z axis is distorted: isotope partners of
@@ -53,8 +53,12 @@ corpus (see [CORPUS.md](CORPUS.md)).
 - **No TIC or base-peak chromatograms are produced.** LC detector
   chromatograms are decoded only for the few files whose format is
   understood.
-- **About 0.2 percent of QTOF scans fail to decode.** Each is logged and
-  counted by `Reader::skipped_scans()`.
+- **About 0.2 percent of QTOF scans fail to decode.** Each one is an
+  `Err` item from `iter_spectra` (counted by `Reader::skipped_scans()`),
+  so mzML export of an affected file stops there unless the writer is
+  told to skip bad records (`RecordErrorPolicy::Skip`). In Python,
+  `RawReader` and `iter_spectra` raise `RuntimeError` for such a scan
+  unless called with `skip_errors=True`.
 
 What has been checked and holds:
 
@@ -112,6 +116,7 @@ use openmassspec_core::SpectrumSource;
 
 let mut reader = Reader::open("sample.lcd")?;
 for spectrum in reader.iter_spectra() {
+    let spectrum = spectrum?;
     println!("{}: {} peaks", spectrum.native_id, spectrum.mz.len());
 }
 ```

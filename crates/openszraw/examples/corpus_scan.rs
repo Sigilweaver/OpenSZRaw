@@ -73,17 +73,13 @@ fn main() {
                     Ok(Ok(n)) => {
                         pass_count += 1;
                         total_spectra += n;
-                        let skipped = reader.skipped_scans();
-                        total_skipped += skipped;
-                        if skipped > 0 {
-                            println!("ok ({n} spectra, {skipped} source scans skipped)");
-                        } else {
-                            println!("ok ({n} spectra)");
-                        }
+                        println!("ok ({n} spectra)");
                     }
                     Ok(Err(e)) => {
                         fail_count += 1;
-                        println!("CONFORMANCE FAIL: {e:?}");
+                        let skipped = reader.skipped_scans();
+                        total_skipped += skipped;
+                        println!("CONFORMANCE FAIL ({skipped} source scans undecodable): {e}");
                         failures.push((format!("{accession}/{file_name}"), format!("{e:?}")));
                     }
                     Err(_) => {
@@ -112,7 +108,7 @@ fn main() {
     println!("Passed: {pass_count}");
     println!("Failed: {fail_count}");
     println!("Total spectra decoded: {total_spectra}");
-    println!("Source scans skipped (passed files): {total_skipped}");
+    println!("Undecodable source scans: {total_skipped}");
     if malformed_rows > 0 {
         println!("Malformed index.csv rows skipped: {malformed_rows}");
     }

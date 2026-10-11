@@ -58,7 +58,7 @@ Seen in PXD019638 (u32 index, every scan) and MTBLS11411 (u64 index, where full-
 - **Intensity Decoding**: The intensity is an unsigned little-endian integer. For `Format` `1`, bit 31 is cleared before use. The flagged values sit on the most intense ions, consistent with a saturation marker (compare the `0x807FB314`-style MRM values below), but the meaning is not confirmed, so the reader drops the bit.
 - **Size validation**: The scan size exactly equals `32 + N_Peaks * record_size` bytes.
 - **Evidence**: summing decoded intensities reproduces the file's own `GCMS Raw Data/TIC Data` stream (one `u64` per scan) for all 391,625 profile scans in the local corpus (47 `.qgd` files). For code `1` this holds only once bit 31 is cleared.
-- **Unknown codes**: a scan with any other `Format` value is skipped and counted (see `Reader::skipped_scans`).
+- **Unknown codes**: a scan with any other `Format` value is reported as an `Err` item by `iter_spectra` and counted (see `Reader::skipped_scans`).
 
 ### MRM / Targeted Mode (Variant B)
 

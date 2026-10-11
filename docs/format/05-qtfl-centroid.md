@@ -103,9 +103,8 @@ the Rust reader) re-derives the same two claims independently:
 One new observation, not previously documented: about 1% of `Centroid
 Index` records per file decode a scan-header intensity-width field that
 is not 1, 2, or 4 (garbage values like 260 were observed). These are the
-same records `crates/openszraw::reader::qtfl_spectra` already silently
-skips via its `Err(_) => continue` on `qtfl::decode_scan`'s width
-validation - i.e. this is pre-existing tolerated behavior, not a new
+same records `crates/openszraw::reader::qtfl_spectra` reports as `Err`
+items when `qtfl::decode_scan`'s width validation rejects them - i.e. this is pre-existing tolerated behavior, not a new
 break, and was very likely present at a similar rate in the original file
 too (its own check only ever reported success/failure over the scans
 that *could* be parsed, not over 100% of index records). Worth a closer

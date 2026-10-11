@@ -16,6 +16,10 @@ fn to_py_err(e: ::openszraw::Error) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
 
+fn core_to_py_err(e: openmassspec_core::Error) -> PyErr {
+    PyRuntimeError::new_err(e.to_string())
+}
+
 fn analyzer_str(a: Analyzer) -> &'static str {
     match a {
         Analyzer::ITMS => "itms",
@@ -24,6 +28,8 @@ fn analyzer_str(a: Analyzer) -> &'static str {
         Analyzer::TOFMS => "tofms",
         Analyzer::FTMS => "ftms",
         Analyzer::Sector => "sector",
+        // A variant added in a later core release: use core's own label.
+        other => other.as_str(),
     }
 }
 
@@ -40,6 +46,8 @@ fn activation_str(a: Activation) -> &'static str {
         Activation::UVPD => "uvpd",
         Activation::SID => "sid",
         Activation::EThcD => "ethcd",
+        // A variant added in a later core release: use core's own label.
+        other => other.as_str(),
     }
 }
 
@@ -47,6 +55,8 @@ fn polarity_str(p: Polarity) -> &'static str {
     match p {
         Polarity::Positive => "positive",
         Polarity::Negative => "negative",
+        // A variant added in a later core release: use core's own label.
+        other => other.as_str(),
     }
 }
 
@@ -54,6 +64,8 @@ fn scan_mode_str(m: ScanMode) -> &'static str {
     match m {
         ScanMode::Centroid => "centroid",
         ScanMode::Profile => "profile",
+        // A variant added in a later core release: use core's own label.
+        other => other.as_str(),
     }
 }
 
@@ -61,13 +73,15 @@ fn mobility_kind_str(k: MobilityArrayKind) -> &'static str {
     match k {
         MobilityArrayKind::InverseReducedVsPerCm2 => "inverse_reduced_k0",
         MobilityArrayKind::DriftTimeMilliseconds => "drift_time_ms",
+        // A variant added in a later core release: use core's own label.
+        other => other.as_str(),
     }
 }
 
 fn cv_term_dict<'py>(py: Python<'py>, term: &CvTerm) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
-    d.set_item("accession", term.accession)?;
-    d.set_item("name", &term.name)?;
+    d.set_item("accession", term.accession.as_ref())?;
+    d.set_item("name", term.name.as_ref())?;
     Ok(d)
 }
 
@@ -123,10 +137,11 @@ fn run_info_dict<'py>(py: Python<'py>, m: &RunMetadata) -> PyResult<Bound<'py, P
 
 fn chromatograms_to_py<'py>(
     py: Python<'py>,
-    records: impl IntoIterator<Item = ChromatogramRecord>,
+    records: impl IntoIterator<Item = openmassspec_core::Result<ChromatogramRecord>>,
 ) -> PyResult<Bound<'py, PyList>> {
     let out = PyList::empty(py);
     for c in records {
+        let c = c.map_err(core_to_py_err)?;
         let d = PyDict::new(py);
         d.set_item("index", c.index)?;
         d.set_item("id", c.id)?;
@@ -284,10 +299,21 @@ pub struct RawReader {
 
 #[pymethods]
 impl RawReader {
+    /// Open and decode a file. A source scan that cannot be decoded
+    /// raises `RuntimeError`, unless `skip_errors=True`, in which case it
+    /// is left out and counted in `skipped_scans`.
     #[new]
-    fn new(path: &str) -> PyResult<Self> {
+    #[pyo3(signature = (path, skip_errors = false))]
+    fn new(path: &str, skip_errors: bool) -> PyResult<Self> {
         let mut reader = Reader::open(path).map_err(to_py_err)?;
-        let spectra = reader.iter_spectra().collect();
+        let mut spectra = Vec::new();
+        for rec in reader.iter_spectra() {
+            match rec {
+                Ok(rec) => spectra.push(rec),
+                Err(_) if skip_errors => {}
+                Err(e) => return Err(core_to_py_err(e)),
+            }
+        }
         Ok(Self {
             path: path.to_string(),
             reader,
@@ -300,7 +326,8 @@ impl RawReader {
         self.spectra.len()
     }
 
-    /// Source scans that could not be decoded and were left out.
+    /// Source scans that could not be decoded. Non-zero only when the
+    /// reader was opened with `skip_errors=True`.
     #[getter]
     fn skipped_scans(&self) -> usize {
         self.reader.skipped_scans()
@@ -326,7 +353,7 @@ impl RawReader {
     /// Detected Shimadzu on-disk variant.
     #[getter]
     fn variant(&self) -> String {
-        format!("{:?}", self.reader.variant()).to_ascii_lowercase()
+        self.reader.variant().as_str().to_string()
     }
 
     /// TTFL index-to-m/z calibration, when this is a calibrated IT-TOF file.
@@ -412,12 +439,23 @@ impl SpectrumIter {
 }
 
 /// Decode spectra one at a time without buffering the whole acquisition.
+/// A source scan that cannot be decoded raises `RuntimeError` and ends
+/// the iteration, unless `skip_errors=True`, in which case it is left out.
 #[pyfunction]
-fn iter_spectra(py: Python<'_>, path: String) -> PyResult<Py<SpectrumIter>> {
+#[pyo3(signature = (path, skip_errors = false))]
+fn iter_spectra(py: Python<'_>, path: String, skip_errors: bool) -> PyResult<Py<SpectrumIter>> {
     let (tx, rx) = mpsc::sync_channel(1);
     let handle = std::thread::spawn(move || match Reader::open(&path) {
         Ok(mut reader) => {
             for rec in reader.iter_spectra() {
+                let rec = match rec {
+                    Ok(rec) => rec,
+                    Err(_) if skip_errors => continue,
+                    Err(e) => {
+                        let _ = tx.send(StreamMsg::Done(Err(e.to_string())));
+                        return;
+                    }
+                };
                 if tx.send(StreamMsg::Record(Box::new(rec))).is_err() {
                     return;
                 }

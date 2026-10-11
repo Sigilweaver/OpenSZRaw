@@ -23,13 +23,6 @@ pub struct SingleQuadScan {
     pub intensity: Vec<f32>,
 }
 
-/// The `Retention Time` / `Spectrum Index` streams are a plain, headerless
-/// `u32[N]` array (`Spectrum Index` holding absolute byte offsets of each
-/// scan into `MS Raw Data`, `Retention Time` holding milliseconds) - the
-/// same shape as `.qgd`'s Variant A `Spectrum Index`. Re-exported from
-/// [`crate::raw::parse_u32_array`] so this path keeps working.
-pub use super::parse_u32_array;
-
 /// Parse one scan from `MS Raw Data` given its full byte range (64-byte
 /// header + peak payload, bounded by consecutive `Spectrum Index`
 /// offsets).

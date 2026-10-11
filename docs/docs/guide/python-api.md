@@ -26,7 +26,7 @@ acquisitions, use the Rust reader's `iter_spectra` instead.
 
 | Member                 | Type       | Description                                                  |
 | ---------------------- | ---------- | -------------------------------------------------------------- |
-| `RawReader(path)`      | constructor | Open the `.qgd`/`.lcd` file at `path` and decode it             |
+| `RawReader(path, skip_errors=False)` | constructor | Open the `.qgd`/`.lcd` file at `path` and decode it. A scan that cannot be decoded raises `RuntimeError`; with `skip_errors=True` it is left out and counted in `skipped_scans` |
 | `scan_count`           | `int`      | Number of decoded spectra                                      |
 | `read_spectrum(index)` | `Spectrum` | The spectrum at zero-based `index` (raises if out of range)    |
 
