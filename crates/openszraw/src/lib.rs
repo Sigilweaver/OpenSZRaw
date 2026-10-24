@@ -25,22 +25,55 @@
 //! A separate, unrelated stream - `LC Raw Data/Chromatogram ChN`
 //! (conventional UV/RID-style LC detector channels) - *is* decoded and
 //! exposed via [`openmassspec_core::SpectrumSource::iter_chromatograms`],
-//! see `raw::lc_chrom` and `docs/format/04-lcd-chromatogram-pda.md`'s
-//! "LC Raw Data Chromatogram Ch5/Ch6 decode" section.
+//! see `docs/format/04-lcd-chromatogram-pda.md`'s "LC Raw Data
+//! Chromatogram Ch5/Ch6 decode" section.
+//!
+//! The public API is [`Reader`] (which implements
+//! [`openmassspec_core::SpectrumSource`]), [`Variant`], [`Calibration`],
+//! [`reader::ScanIndexInfo`] and [`Error`]. The byte-level parsers are
+//! internal.
 
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
 
-pub mod raw;
+mod raw;
 pub mod reader;
 
+pub use raw::ttfl::Calibration;
+pub use raw::Variant;
 pub use reader::Reader;
 
+/// Errors returned by this crate. Marked `#[non_exhaustive]` so new
+/// variants can be added without a breaking change; match with a
+/// wildcard arm.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("parse error: {0}")]
     Parse(String),
+    /// One source scan (IT-TOF: one channel subset) could not be decoded.
+    /// Yielded as an `Err` item by
+    /// [`openmassspec_core::SpectrumSource::iter_spectra`]; later scans
+    /// still decode and keep their own `scan_number` / `native_id`.
+    #[error("cannot decode source scan {source_index}: {message}")]
+    #[non_exhaustive]
+    ScanDecode {
+        /// 0-based position of the scan in the file's own scan index
+        /// (IT-TOF: the channel subset position in `Data Index`).
+        source_index: usize,
+        /// What was wrong with it.
+        message: String,
+    },
+}
+
+impl From<Error> for openmassspec_core::Error {
+    fn from(e: Error) -> Self {
+        match e {
+            Error::Io(io) => openmassspec_core::Error::Io(io),
+            other => openmassspec_core::Error::vendor(other),
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

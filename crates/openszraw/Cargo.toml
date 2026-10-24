@@ -18,6 +18,7 @@ workspace = true
 [dependencies]
 byteorder = { workspace = true }
 cfb = { workspace = true }
+log = { workspace = true }
 openmassspec-core = { workspace = true }
 thiserror = { workspace = true }
 

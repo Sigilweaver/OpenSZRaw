@@ -26,7 +26,7 @@ acquisitions, use the Rust reader's `iter_spectra` instead.
 
 | Member                 | Type       | Description                                                  |
 | ---------------------- | ---------- | -------------------------------------------------------------- |
-| `RawReader(path)`      | constructor | Open the `.qgd`/`.lcd` file at `path` and decode it             |
+| `RawReader(path, skip_errors=False)` | constructor | Open the `.qgd`/`.lcd` file at `path` and decode it. A scan that cannot be decoded raises `RuntimeError`; with `skip_errors=True` it is left out and counted in `skipped_scans` |
 | `scan_count`           | `int`      | Number of decoded spectra                                      |
 | `read_spectrum(index)` | `Spectrum` | The spectrum at zero-based `index` (raises if out of range)    |
 
@@ -46,9 +46,10 @@ for i in range(reader.scan_count):
 | `ms_level`            | `int`         | MS level (1 for MS1, 2+ for MS/MS)   |
 | `retention_time_sec`  | `float`       | Retention time in seconds            |
 
-`len(spectrum)` returns the peak count. For `.lcd` IT-TOF files, `mz` is
-calibrated physical m/z (derived from the file's own embedded TOF tuning
-data); for `.lcd` QTOF MS2 spectra, precursor m/z is not yet populated.
+`len(spectrum)` returns the peak count. For `.lcd` QTOF files, `mz` is
+wrong (distorted axis) and MS2 precursor m/z is not populated. For
+`.lcd` IT-TOF files, `mz` comes from a per-file calibration derived from
+the file's own TOF tuning data and is not validated.
 See [Scan data](./scan-data) for the details and the current
 [known limitations](../format/known-limitations).
 

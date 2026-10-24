@@ -1,0 +1,5 @@
+# Keep `cargo update` / new lockfile entries within the workspace
+# rust-version (MSRV) instead of picking newer releases that need a newer
+# compiler.
+[resolver]
+incompatible-rust-versions = "fallback"

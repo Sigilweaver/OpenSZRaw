@@ -1,6 +1,15 @@
 # 05. LC-MS QTOF (.lcd) QTFL Centroid Data
 
-**Status**: CONFIRMED
+**Status**: payload layout and intensities CONFIRMED; m/z transform WRONG
+
+The `u64 / 1e12` m/z decode below reproduces the stored base-peak
+intensity but not physical m/z. An isotope-spacing check on two
+independent accessions (MSV000084197/20190607_NM16, MTBLS13204
+QC_4_4_pos_P1_pos_094) finds isotope partners of intense peaks about
+1100/m Da apart (a sharp mode of spacing x m/z / 1.00335 at 1090 to 1100,
+second mode at 2180 to 2200 for M+2), for example 1.86 Da at m/z 592 and
+1.04 Da at m/z 1062, instead of 1.003 Da. The stored value is therefore
+not linear in true m/z. The correct transform is not yet known.
 
 The `QTFL RawData` directory in 9030 QTOF `.lcd` files (e.g., MSV000084197) contains centroided mass spectrometry data. Unlike IT-TOF, the QTOF format uses a clean, uncompressed block layout for its centroid data.
 
@@ -56,8 +65,8 @@ verified against `MSV000084197/20190607_NM16.lcd` - see
    precursor m/z lives in the separate, undecoded `QTFL RawData/DDA`
    stream.
 
-The "Status: CONFIRMED" line above refers specifically to the payload
-byte-layout claim it was originally verified against (which remains
+The "CONFIRMED" part of the status line above refers specifically to the
+payload byte-layout claim it was originally verified against (which remains
 correct for the common 16-bit-intensity case); it did not cover scan
 classification or the variable intensity width, both undiscovered at
 the time.
@@ -94,9 +103,8 @@ the Rust reader) re-derives the same two claims independently:
 One new observation, not previously documented: about 1% of `Centroid
 Index` records per file decode a scan-header intensity-width field that
 is not 1, 2, or 4 (garbage values like 260 were observed). These are the
-same records `crates/openszraw::reader::qtfl_spectra` already silently
-skips via its `Err(_) => continue` on `qtfl::decode_scan`'s width
-validation - i.e. this is pre-existing tolerated behavior, not a new
+same records `crates/openszraw::reader::qtfl_spectra` reports as `Err`
+items when `qtfl::decode_scan`'s width validation rejects them - i.e. this is pre-existing tolerated behavior, not a new
 break, and was very likely present at a similar rate in the original file
 too (its own check only ever reported success/failure over the scans
 that *could* be parsed, not over 100% of index records). Worth a closer

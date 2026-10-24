@@ -11,7 +11,23 @@ things silently guessed or fabricated. See the sibling readers'
 equivalent pages (e.g. OpenSXRaw's legacy-TOF calibration gap) for the
 precedent this follows.
 
+## QTOF (`.lcd` QTFL): m/z values are wrong
+
+The reader decodes each stored `u64` value as `mz = value / 1e12`. This
+reproduces the stored base-peak intensity exactly, but the m/z axis is
+not linear in true m/z: isotope partners of intense peaks sit about 1100/m Da apart (1.86 Da at
+m/z 592, 1.04 Da at m/z 1062) instead of 1.003 Da, in two independent
+accessions. This affects every QTOF file. The
+correct transform is not yet known. Do not use QTOF m/z values for
+identification or accurate-mass work.
+
 ## IT-TOF (`.lcd` TTFL): m/z calibration
+
+**The resulting m/z values are not validated.** An independent check on
+sample spectra found no isotope structure and no cluster of known
+background ions, and 21 of 29 sampled files contain spectra whose m/z
+array is not sorted. The calibration below fits the tuning data exactly,
+but that does not show it maps the scan payload correctly.
 
 The reconstructed index axis from the run-length-encoded payload (see
 [LC-MS IT-TOF](./lcd-ittof)) is a raw digitizer/TOF time-bin index. The
@@ -32,8 +48,8 @@ been observed in the local corpus.
 The reconstructed index can reach values well past what might seem like
 a reasonable upper bound for a time-bin axis (into the hundreds of
 thousands in some real corpus scans); under calibration this maps to
-implausibly large m/z, reflecting those positions being electronic
-noise rather than real ions. The reader does not clamp, filter, or
+implausibly large m/z (up to about 780,000), which may be electronic
+noise or may reflect the calibration problem above. The reader does not clamp, filter, or
 validate the index against any assumed range - that is downstream
 peak-picking's job.
 

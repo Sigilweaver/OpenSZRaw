@@ -35,8 +35,8 @@ channels per retention-time point (commonly alternating polarity or
 MS level in the source method, e.g. datasets named `..._pos-neg_NN.lcd`
 - though OpenSZRaw does not yet decode which channel is which). The
 reconstructed index axis is a raw digitizer time-bin index, converted to
-physical m/z via a per-file calibration parsed from the file's own TOF
-tuning data - see
+m/z via a per-file calibration parsed from the file's own TOF tuning
+data. The resulting m/z values have not been validated - see
 [Known limitations](../format/known-limitations).
 
 ## `.lcd` QTOF
@@ -44,8 +44,10 @@ tuning data - see
 Root storage: `QTFL RawData/`. Produced by LabSolutions on Shimadzu's
 9030-series quadrupole time-of-flight LC-MS instruments. Spectra are
 centroided at acquisition time (no profile data), stored in a flat,
-uncompressed block layout with calibrated 64-bit-fixed-point m/z values
-and a per-scan variable-width intensity array. A per-cycle `event_id`
+uncompressed block layout with 64-bit fixed-point m/z values and a
+per-scan variable-width intensity array. The reader's m/z decode for
+these values is wrong (the axis is distorted), so QTOF m/z should not be
+used yet. A per-cycle `event_id`
 distinguishes MS1 survey scans from MS2 product-ion scans, but the real
 MS2 precursor m/z is not yet decoded (it lives in the separate
 `QTFL RawData/DDA` stream).

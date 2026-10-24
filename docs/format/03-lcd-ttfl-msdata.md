@@ -1,8 +1,8 @@
 # 03. LC-MS IT-TOF (.lcd) MS Data Structures
 
 **Status**: PARTIAL (payload run-length encoding scheme: CONFIRMED;
-index-to-m/z calibration: CONFIRMED, see section 3c; scan metadata
-prefix: still open)
+index-to-m/z calibration: fit to tuning data CONFIRMED, resulting m/z
+NOT VALIDATED, see section 3c; scan metadata prefix: still open)
 
 The `TTFL Raw Data` directory in IT-TOF `.lcd` files contains the primary
 mass spectrometry raw data (e.g., MTBLS432, PXD020792). It uses a
@@ -222,7 +222,15 @@ claims:
   arithmetically match the decoded per-scan intensity sums in any
   straightforward way tried (no scaling factor found). Left open.
 
-### 3c. Channel-index -> m/z calibration (CONFIRMED)
+### 3c. Channel-index -> m/z calibration (fit CONFIRMED, m/z NOT VALIDATED)
+
+A later physics check on sample spectra did not support this calibration:
+an isotope-spacing scan on an MTBLS432 file found no isotope structure
+(most common spacings 0.23 to 0.26 Da, flat), a background-ion check
+across 4 IT-TOF accessions found no cluster (offsets -1,200 to +2,100 ppm),
+and 21 of 29 sampled files contain spectra whose m/z array is not sorted.
+The fit to the tuning ladder below holds; whether it maps the RLE payload
+index to true m/z is open.
 
 Resolves Sigilweaver/OpenSZRaw#1. The RLE stream's implicit index axis
 (position, reconstructed via cumulative `skip` values) is a raw
@@ -370,7 +378,8 @@ dropping data.
   PXD020792).
 - Scan metadata prefix content: **PARTIAL/open** - boundary reliably
   located, byte layout not decoded.
-- Channel-index-to-m/z calibration: **CONFIRMED** - see section 3c above.
+- Channel-index-to-m/z calibration: fit **CONFIRMED**, resulting m/z
+  **NOT VALIDATED** - see section 3c above.
 
 Scripts: `re/src/analysis/ttfl_reconfirm.py`,
 `re/src/analysis/ttfl_header_scan.py`,

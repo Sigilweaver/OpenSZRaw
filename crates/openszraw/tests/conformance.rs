@@ -1,15 +1,20 @@
 //! Conformance tests against real corpus fixtures, one per on-disk
-//! variant. Most of the corpus lives out of tree
-//! (`/workspaces/Projects/Data/SZRaw`) and is not checked into this repo,
-//! so these tests skip cleanly (rather than failing the build) when a
-//! fixture is absent.
+//! variant. The corpus lives out of tree and is not checked into this
+//! repo, so by default these tests skip cleanly (rather than failing the
+//! build) when a fixture is absent.
 //!
-//! The two `.qgd` GC-MS fixtures (`qgd_profile_fixture`/
-//! `qgd_mrm_fixture`) are the exception: `.github/workflows/ci.yml`'s
-//! `build` job downloads them into a repo-root, gitignored `corpus/`
-//! directory ahead of `cargo test`, so `qgd_profile_conformance` and
-//! `qgd_mrm_conformance` (plus the plausibility tests below them)
-//! exercise a real decode path in CI instead of always skipping - see
+//! Fixture lookup, first match wins, for a fixture `<ACCESSION>/<file>`:
+//!
+//! 1. `$OPENSZRAW_CORPUS/<ACCESSION>/<file>` (full local corpus layout,
+//!    see `CORPUS.md`)
+//! 2. `$OPENSZRAW_CORPUS/<ACCESSION>_<file>` (flat layout used by CI)
+//! 3. `<repo>/corpus/<ACCESSION>_<file>` (CI default when
+//!    `OPENSZRAW_CORPUS` is unset)
+//!
+//! Set `REQUIRE_CORPUS=1` to turn a missing fixture into a test failure
+//! instead of a skip. `.github/workflows/ci.yml` downloads the two `.qgd`
+//! GC-MS fixtures and runs the `qgd_` tests with `REQUIRE_CORPUS=1`, so a
+//! broken download fails CI instead of silently skipping - see
 //! Sigilweaver/OpenSZRaw#32.
 
 use openmassspec_core::conformance::assert_source_invariants;
@@ -17,10 +22,22 @@ use openmassspec_core::SpectrumSource;
 use openszraw::reader::Reader;
 use std::path::{Path, PathBuf};
 
-/// Picks the first candidate that exists on disk, falling back to the
-/// first candidate (so `open_or_skip`'s exists-check still reports a
-/// sensible path when none are present).
-fn pick_fixture(candidates: &[PathBuf]) -> PathBuf {
+/// Resolve `<accession>/<file>` against the lookup order in the module
+/// doc comment. Falls back to the first candidate so `open_or_skip`
+/// still reports a sensible path when none exist.
+fn fixture(accession: &str, file: &str) -> PathBuf {
+    let flat = format!("{accession}_{file}");
+    let mut candidates = Vec::new();
+    if let Some(root) = std::env::var_os("OPENSZRAW_CORPUS").filter(|v| !v.is_empty()) {
+        let root = PathBuf::from(root);
+        candidates.push(root.join(accession).join(file));
+        candidates.push(root.join(&flat));
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus")
+            .join(&flat),
+    );
     candidates
         .iter()
         .find(|p| p.exists())
@@ -29,30 +46,19 @@ fn pick_fixture(candidates: &[PathBuf]) -> PathBuf {
 }
 
 fn qgd_profile_fixture() -> PathBuf {
-    pick_fixture(&[
-        // CI / repo-root corpus dir (gitignored; populated by
-        // ci.yml's "Download corpus fixtures for conformance tests"
-        // step). This is the one CI actually uses.
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/PXD019638_L-B2-Br0-1.qgd"),
-        // Local dev setups with the full out-of-tree corpus checked out.
-        PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD019638/L-B2-Br0-1.qgd"),
-    ])
+    fixture("PXD019638", "L-B2-Br0-1.qgd")
 }
 
 fn qgd_mrm_fixture() -> PathBuf {
-    pick_fixture(&[
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../corpus/PXD034978_49_27a__8122021_11.qgd"),
-        PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD034978/49_27a__8122021_11.qgd"),
-    ])
+    fixture("PXD034978", "49_27a__8122021_11.qgd")
 }
 
 fn qtfl_fixture() -> PathBuf {
-    PathBuf::from("/workspaces/Projects/Data/SZRaw/MSV000084197/20190607_NM16.lcd")
+    fixture("MSV000084197", "20190607_NM16.lcd")
 }
 
 fn ttfl_fixture() -> PathBuf {
-    PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD020792/UY02-01-01p400.LCD")
+    fixture("PXD020792", "UY02-01-01p400.LCD")
 }
 
 /// Same file as `ttfl_fixture`; `PXD020792` is also where
@@ -62,23 +68,31 @@ fn ttfl_lc_chromatogram_fixture() -> PathBuf {
     ttfl_fixture()
 }
 
-/// Regression fixture for the `Data Index` `entry_i`/trailing-partial-
-/// block bug fixed this session - see the addendum in
-/// `docs/format/03-lcd-ttfl-msdata.md` and
+/// Fixture for the `Data Index` `entry_i`/trailing-partial-block layout -
+/// see `docs/format/03-lcd-ttfl-msdata.md` and
 /// `docs/format/06-known-limitations.md` section 1b. This file has only
 /// 2 real interleaved channels per RT point (packing 2 RT points per
 /// 64-byte `Data Index` block) and an odd RT-point count, producing a
 /// trailing 32-byte partial block.
 fn ttfl_partial_block_fixture() -> PathBuf {
-    PathBuf::from("/workspaces/Projects/Data/SZRaw/PXD025121/17.lcd")
+    fixture("PXD025121", "17.lcd")
 }
 
 fn single_quad_fixture() -> PathBuf {
-    PathBuf::from("/workspaces/Projects/Data/SZRaw/MTBLS1960/E1.lcd")
+    fixture("MTBLS1960", "E1.lcd")
+}
+
+fn corpus_required() -> bool {
+    std::env::var("REQUIRE_CORPUS").is_ok_and(|v| v == "1")
 }
 
 fn open_or_skip(path: &Path) -> Option<Reader> {
     if !path.exists() {
+        assert!(
+            !corpus_required(),
+            "REQUIRE_CORPUS=1 but fixture is missing: {} (set OPENSZRAW_CORPUS)",
+            path.display()
+        );
         eprintln!("skip: corpus not present at {}", path.display());
         return None;
     }
@@ -100,7 +114,10 @@ fn qgd_profile_peaks_are_plausible() {
     let Some(mut reader) = open_or_skip(&qgd_profile_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     assert!(!spectra.is_empty());
     assert!(spectra.iter().all(|s| s.ms_level == 1));
 
@@ -153,7 +170,10 @@ fn qgd_mrm_transitions_are_plausible() {
     let Some(mut reader) = open_or_skip(&qgd_mrm_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     assert!(!spectra.is_empty());
     assert!(spectra.iter().all(|s| s.ms_level == 2));
     assert!(spectra
@@ -193,7 +213,10 @@ fn qtfl_centroid_mz_is_plausible_and_has_ms2() {
     let Some(mut reader) = open_or_skip(&qtfl_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     assert!(!spectra.is_empty());
 
     let has_ms1 = spectra.iter().any(|s| s.ms_level == 1);
@@ -201,7 +224,7 @@ fn qtfl_centroid_mz_is_plausible_and_has_ms2() {
     assert!(has_ms1, "expected at least one MS1 (event_id==1) scan");
     assert!(
         has_ms2,
-        "expected at least one MS2 (event_id>1) scan - see docs/format/05 addendum"
+        "expected at least one MS2 (event_id>1) scan - see docs/format/05"
     );
 
     let with_peaks: Vec<_> = spectra.iter().filter(|s| !s.mz.is_empty()).collect();
@@ -216,8 +239,8 @@ fn qtfl_centroid_mz_is_plausible_and_has_ms2() {
         }
     }
 
-    // Every MS2 spectrum must carry a precursor reference (even though we
-    // do not decode the real precursor m/z this session - see
+    // Every MS2 spectrum must carry a precursor reference (even though
+    // the real precursor m/z is not decoded - see
     // docs/format/06-known-limitations.md).
     for s in spectra.iter().filter(|s| s.ms_level == 2) {
         assert!(
@@ -262,7 +285,10 @@ fn ttfl_mz_is_calibrated_finite_and_nonnegative() {
     let Some(mut reader) = open_or_skip(&ttfl_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     assert!(!spectra.is_empty());
     assert!(spectra.iter().all(|s| s.ms_level == 1));
 
@@ -293,7 +319,10 @@ fn ttfl_base_peak_mz_is_plausible_for_most_scans() {
     let Some(mut reader) = open_or_skip(&ttfl_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     let base_peaks: Vec<f64> = spectra
         .iter()
         .filter_map(|s| {
@@ -318,7 +347,7 @@ fn ttfl_base_peak_mz_is_plausible_for_most_scans() {
 }
 
 /// See `raw::lc_chrom` and docs/format/04's "LC Raw Data Chromatogram
-/// Ch5/Ch6 decode" session (Sigilweaver/OpenSZRaw#21). Only `Ch6` is
+/// Ch5/Ch6 decode" section (Sigilweaver/OpenSZRaw#21). Only `Ch6` is
 /// expected to decode - `Ch5` is deliberately skipped (single repeated
 /// value in every corpus file, grammar untestable, see
 /// `lc_chrom::decode_stream`'s doc comment).
@@ -327,7 +356,10 @@ fn ttfl_lc_chromatogram_ch6_decodes_and_is_plausible() {
     let Some(mut reader) = open_or_skip(&ttfl_lc_chromatogram_fixture()) else {
         return;
     };
-    let chroms: Vec<_> = reader.iter_chromatograms().collect();
+    let chroms: Vec<_> = reader
+        .iter_chromatograms()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every chromatogram decodes");
     assert_eq!(
         chroms.len(),
         1,
@@ -370,7 +402,10 @@ fn ttfl_lc_chromatogram_ch5_is_not_emitted() {
     let Some(mut reader) = open_or_skip(&ttfl_lc_chromatogram_fixture()) else {
         return;
     };
-    let chroms: Vec<_> = reader.iter_chromatograms().collect();
+    let chroms: Vec<_> = reader
+        .iter_chromatograms()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every chromatogram decodes");
     assert!(
         chroms.iter().all(|c| !c.id.ends_with("Ch5")),
         "Ch5 should not be emitted (single repeated value, grammar untestable)"
@@ -391,16 +426,18 @@ fn single_quad_conformance() {
 /// decodes full-scan profile spectra with a per-scan peak-record width
 /// (4 or 5 bytes, observed in this corpus) derived from the header's own
 /// peak count, verified byte-exact against `Mass Raw Data/TIC Data`
-/// during development (0 mismatches across 19,200 scans, 8 corpus
-/// files) - that check lives in the format doc / decode session, not
-/// here, since `TIC Data` itself is not currently surfaced through
+/// (0 mismatches across 19,200 scans, 8 corpus files). That check is
+/// documented in the format doc, not run here, since `TIC Data` itself is not currently surfaced through
 /// `SpectrumSource`.
 #[test]
 fn single_quad_peaks_are_plausible() {
     let Some(mut reader) = open_or_skip(&single_quad_fixture()) else {
         return;
     };
-    let spectra: Vec<_> = reader.iter_spectra().collect();
+    let spectra: Vec<_> = reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes");
     assert!(!spectra.is_empty());
     assert!(spectra.iter().all(|s| s.ms_level == 1));
 

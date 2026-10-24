@@ -4,7 +4,14 @@ sidebar_position: 5
 
 # LC-MS QTOF (.lcd)
 
-## Status: Confirmed for the payload shape, with corrections
+## Status: Payload shape confirmed; m/z transform wrong
+
+The record layout and intensities below are confirmed. The m/z decode
+(`u64_value / 1e12`) is not: isotope partners of intense peaks sit about 1100/m Da apart (1.86 Da at
+m/z 592, 1.04 Da at m/z 1062) instead of 1.003 Da, in two independent
+accessions. The stored value is not linear
+in true m/z, and the correct transform is not yet known. See
+[Known limitations](./known-limitations).
 
 The `QTFL RawData` storage in 9030-series QTOF `.lcd` files holds
 centroided mass-spectrometry data. Unlike IT-TOF, QTOF uses a clean,
@@ -29,8 +36,9 @@ precursors per cycle.
 Every scan begins with a 64-byte header, including the base-peak
 intensity and the data payload size in bytes. The payload itself is:
 
-1. An `N`-element array of `u64` (LE) m/z values, scaled by 10^12
-   (`mz = u64_value / 1e12`).
+1. An `N`-element array of `u64` (LE) values that the reader reports as
+   m/z, scaled by 10^12 (`mz = u64_value / 1e12`). This does not give
+   correct m/z; see the status note above.
 2. An `N`-element intensity array.
 
 `N` is `payload_size / (8 + width)`, where `width` (1, 2, or 4 bytes) is

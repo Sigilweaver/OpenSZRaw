@@ -31,8 +31,22 @@ is (see below).
 ## Full-scan profile mode
 
 The payload following the header is `N_Peaks` interleaved
-`(m/z, intensity)` `u16` pairs. m/z is scaled by 10 (raw `1000` = `100.0`
-Da). Scan size validates exactly as `32 + N_Peaks * 4` bytes.
+`(m/z, intensity)` records: a `u16` m/z scaled by 10 (raw `1000` =
+`100.0` Da) followed by a little-endian unsigned intensity. The header's
+`Format` code selects the intensity width per scan, and one file can mix
+codes:
+
+| `Format` | Intensity width |
+|---|---|
+| `2` | 2 bytes |
+| `3` | 3 bytes |
+| `1` | 4 bytes; bit 31 is a flag and is cleared |
+
+Scan size validates exactly as `32 + N_Peaks * (2 + width)` bytes.
+Summed intensities match the file's own `TIC Data` stream for every
+profile scan in the local corpus. A scan with an unknown `Format` code
+is reported as an `Err` item by `iter_spectra` and counted in
+`Reader::skipped_scans`.
 
 ## MRM / targeted mode
 
