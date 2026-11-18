@@ -22,7 +22,8 @@ abstract: >
   documented limitations.
 license: "Apache-2.0"
 license-url: "https://github.com/Sigilweaver/OpenSZRaw/blob/main/LICENSE"
-version: "0.1.0"
+date-released: "2026-10-11"
+version: "0.3.0"
 keywords:
   - mass spectrometry
   - metabolomics
