@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the minimum Python version is 3.10 (was 3.8), and the
+  wheel is one abi3 wheel per platform built for CPython 3.10 and later
+  (PyPy has no wheel). This follows
+  [SUPPORT.md](https://github.com/Sigilweaver/ops/blob/main/SUPPORT.md).
+- **Breaking:** requires `openmassspec-core` 4.0.0 (was 3.0.0). See
+  [MIGRATING-4.0.md](https://github.com/Sigilweaver/OpenMassSpecCore/blob/main/MIGRATING-4.0.md)
+  in OpenMassSpecCore for the shared-type changes. What reaches users of
+  this crate:
+  - `SpectrumRecord::retention_time_sec` is `Option<f64>`. A scan with a
+    `Retention Time` record has `Some`.
+  - `PrecursorInfo::collision_energy` and `ce_is_nce` are replaced by
+    `collision_energies`. The reader does not decode collision energy, so
+    the list is empty on every record.
+  - mzML export applies Core 4's strict checks. IT-TOF and
+    single-quadrupole `.lcd` spectra whose m/z array is not ascending
+    stop the write with `RecordProblem::UnsortedMz`; see Known issues in
+    the README for the files affected and the options.
+  - Spectra with an `analyzer` of `TOFMS` are labelled `tof` in serialized
+    form and in Python.
+- **Breaking (Python):** `Spectrum.retention_time_sec` is `float | None`
+  (was `float`). The precursor dict has `collision_energies` (a list of
+  `{"value", "unit"}` dicts, empty when the file has no collision energy)
+  in place of `collision_energy` and `ce_is_nce`. Analyzer, scan mode,
+  polarity, activation and mobility labels are Core's `as_str` labels:
+  the QTOF and IT-TOF analyzer is `"tof"` (was `"tofms"`).
+- Python wheels use the `abi3-py310` PyO3 feature.
+
+### Fixed
+
+- Spectra with no `Retention Time` record now carry no retention time
+  instead of 0 (IT-TOF and QTOF). Core 4's mzML writer rejects such a
+  record (`MissingRetentionTime`) rather than writing a scan at 0 seconds,
+  and `RecordErrorPolicy::Skip` counts it. The reader still logs the
+  number of affected spectra at `warn`. No corpus file checked so far has
+  this problem.
+
 ## [0.3.0] - 2026-10-11
 
 ### Breaking

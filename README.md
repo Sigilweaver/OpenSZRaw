@@ -20,7 +20,7 @@ Documentation: [sigilweaver.app/openszraw/docs](https://sigilweaver.app/openszra
 
 ## Known issues and gaps
 
-These apply to openszraw 0.3.0 and all earlier releases. Figures come
+These apply to openszraw 0.4.0. Figures come
 from checks run on the public validation corpus (see
 [CORPUS.md](https://github.com/Sigilweaver/OpenSZRaw/blob/main/CORPUS.md)).
 
@@ -45,7 +45,24 @@ from checks run on the public validation corpus (see
   known.
 - **LC-MS/MS triple quadrupole `.lcd` (LCMS-8040/8050/8060) is not
   supported.** `Reader::open` refuses these files (275 corpus files).
-- **Polarity is not reported for any file type.**
+- **Polarity is not reported for any file type.** mzML export writes
+  spectra with no polarity term.
+- **Collision energy and activation are not decoded.** `.qgd` MRM and
+  QTOF MS2 records have `collision_energies` empty and no `activation`.
+  mzML export marks the activation as unknown (an `openmassspec: activation`
+  userParam with value `unknown`) and writes no collision energy, so the
+  `unknown_collision_energy_unit` check never fires for this reader.
+- **mzML export stops on IT-TOF and single quadrupole `.lcd` files with
+  unsorted m/z.** Core's writer rejects a spectrum whose m/z array is not
+  ascending (`RecordProblem::UnsortedMz`) and the reader returns the
+  array as decoded. It affects the files named in the two m/z items above
+  (IT-TOF: 216 of 1,340 spectra in `PXD020792/UY02-01-01p400.LCD`;
+  single quadrupole: 434 of 2,400 in `MTBLS1960/E1.lcd`). There is no
+  `--allow` check for it. `RecordErrorPolicy::Skip` leaves those spectra out
+  and counts them in `WriteSummary::spectra_invalid`.
+- **Spectra with no `Retention Time` record have no retention time.**
+  Core's writer rejects them (`MissingRetentionTime`). No corpus file
+  checked has this.
 - **QTOF MS2 spectra have no precursor m/z.** They link to their MS1 scan
   only.
 - **Single quadrupole `.lcd` (LCMS-2020): some spectra are not sorted by
