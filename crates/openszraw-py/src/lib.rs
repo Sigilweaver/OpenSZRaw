@@ -5,8 +5,7 @@ use std::sync::{mpsc, Mutex};
 
 use ::openszraw::reader::Reader;
 use openmassspec_core::{
-    Activation, Analyzer, ChromatogramRecord, CvTerm, MobilityArrayKind, Polarity, PrecursorInfo,
-    RunMetadata, ScanMode, SpectrumRecord, SpectrumSource,
+    ChromatogramRecord, CvTerm, PrecursorInfo, RunMetadata, SpectrumRecord, SpectrumSource,
 };
 use pyo3::exceptions::{PyIndexError, PyRuntimeError};
 use pyo3::prelude::*;
@@ -20,69 +19,24 @@ fn core_to_py_err(e: openmassspec_core::Error) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
 
-fn analyzer_str(a: Analyzer) -> &'static str {
-    match a {
-        Analyzer::ITMS => "itms",
-        Analyzer::TQMS => "tqms",
-        Analyzer::SQMS => "sqms",
-        Analyzer::TOFMS => "tofms",
-        Analyzer::FTMS => "ftms",
-        Analyzer::Sector => "sector",
-        // A variant added in a later core release: use core's own label.
-        other => other.as_str(),
-    }
-}
-
-fn activation_str(a: Activation) -> &'static str {
-    match a {
-        Activation::HCD => "hcd",
-        Activation::MPID => "mpid",
-        Activation::ETD => "etd",
-        Activation::CID => "cid",
-        Activation::ECD => "ecd",
-        Activation::IRMPD => "irmpd",
-        Activation::PD => "pd",
-        Activation::PQD => "pqd",
-        Activation::UVPD => "uvpd",
-        Activation::SID => "sid",
-        Activation::EThcD => "ethcd",
-        // A variant added in a later core release: use core's own label.
-        other => other.as_str(),
-    }
-}
-
-fn polarity_str(p: Polarity) -> &'static str {
-    match p {
-        Polarity::Positive => "positive",
-        Polarity::Negative => "negative",
-        // A variant added in a later core release: use core's own label.
-        other => other.as_str(),
-    }
-}
-
-fn scan_mode_str(m: ScanMode) -> &'static str {
-    match m {
-        ScanMode::Centroid => "centroid",
-        ScanMode::Profile => "profile",
-        // A variant added in a later core release: use core's own label.
-        other => other.as_str(),
-    }
-}
-
-fn mobility_kind_str(k: MobilityArrayKind) -> &'static str {
-    match k {
-        MobilityArrayKind::InverseReducedVsPerCm2 => "inverse_reduced_k0",
-        MobilityArrayKind::DriftTimeMilliseconds => "drift_time_ms",
-        // A variant added in a later core release: use core's own label.
-        other => other.as_str(),
-    }
-}
-
 fn cv_term_dict<'py>(py: Python<'py>, term: &CvTerm) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
     d.set_item("accession", term.accession.as_ref())?;
     d.set_item("name", term.name.as_ref())?;
     Ok(d)
+}
+
+/// Collision energies as a list of `{"value", "unit"}` dicts. `unit` is
+/// Core's `as_str` label, or `None` when the file does not say.
+fn collision_energy_list<'py>(py: Python<'py>, p: &PrecursorInfo) -> PyResult<Bound<'py, PyList>> {
+    let out = PyList::empty(py);
+    for ce in &p.collision_energies {
+        let d = PyDict::new(py);
+        d.set_item("value", ce.value)?;
+        d.set_item("unit", ce.unit.map(|u| u.as_str()))?;
+        out.append(d)?;
+    }
+    Ok(out)
 }
 
 fn precursor_dict<'py>(py: Python<'py>, p: &PrecursorInfo) -> PyResult<Bound<'py, PyDict>> {
@@ -92,11 +46,10 @@ fn precursor_dict<'py>(py: Python<'py>, p: &PrecursorInfo) -> PyResult<Bound<'py
     d.set_item("isolation_width", p.isolation_width)?;
     d.set_item("charge", p.charge)?;
     d.set_item("intensity", p.intensity)?;
-    d.set_item("collision_energy", p.collision_energy)?;
-    d.set_item("ce_is_nce", p.ce_is_nce)?;
+    d.set_item("collision_energies", collision_energy_list(py, p)?)?;
     d.set_item("precursor_native_id", &p.precursor_native_id)?;
-    d.set_item("activation", p.activation.map(activation_str))?;
-    d.set_item("analyzer", p.analyzer.map(analyzer_str))?;
+    d.set_item("activation", p.activation.map(|a| a.as_str()))?;
+    d.set_item("analyzer", p.analyzer.map(|a| a.as_str()))?;
     d.set_item("ccs", p.ccs)?;
     Ok(d)
 }
@@ -121,15 +74,11 @@ fn run_info_dict<'py>(py: Python<'py>, m: &RunMetadata) -> PyResult<Bound<'py, P
     d.set_item("start_timestamp", &m.start_timestamp)?;
     d.set_item(
         "mobility_array_kind",
-        m.mobility_array_kind.map(mobility_kind_str),
+        m.mobility_array_kind.map(|k| k.as_str()),
     )?;
     d.set_item(
         "analyzers",
-        m.analyzers
-            .iter()
-            .copied()
-            .map(analyzer_str)
-            .collect::<Vec<_>>(),
+        m.analyzers.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
     )?;
     d.set_item("extra", &m.extra)?;
     Ok(d)
@@ -187,15 +136,15 @@ impl Spectrum {
     }
     #[getter]
     fn polarity(&self) -> Option<&'static str> {
-        self.rec.polarity.map(polarity_str)
+        self.rec.polarity.map(|p| p.as_str())
     }
     #[getter]
     fn scan_mode(&self) -> Option<&'static str> {
-        self.rec.scan_mode.map(scan_mode_str)
+        self.rec.scan_mode.map(|m| m.as_str())
     }
     #[getter]
     fn analyzer(&self) -> Option<&'static str> {
-        self.rec.analyzer.map(analyzer_str)
+        self.rec.analyzer.map(|a| a.as_str())
     }
     #[getter]
     fn acquisition_event_id(&self) -> Option<u32> {
@@ -206,7 +155,7 @@ impl Spectrum {
         self.rec.filter.as_deref()
     }
     #[getter]
-    fn retention_time_sec(&self) -> f64 {
+    fn retention_time_sec(&self) -> Option<f64> {
         self.rec.retention_time_sec
     }
     #[getter]
@@ -282,11 +231,10 @@ impl Spectrum {
         self.rec.mz.len()
     }
     fn __repr__(&self) -> String {
-        format!(
-            "Spectrum({} peaks, RT {:.2}s)",
-            self.rec.mz.len(),
-            self.rec.retention_time_sec,
-        )
+        match self.rec.retention_time_sec {
+            Some(rt) => format!("Spectrum({} peaks, RT {rt:.2}s)", self.rec.mz.len()),
+            None => format!("Spectrum({} peaks, no RT)", self.rec.mz.len()),
+        }
     }
 }
 
