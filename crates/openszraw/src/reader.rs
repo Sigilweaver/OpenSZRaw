@@ -115,7 +115,7 @@ struct BuiltSpectra {
     /// Number of `Err` items in `records`.
     skipped: usize,
     /// Emitted spectra whose `Retention Time` record was missing, so
-    /// their `retention_time` is 0.
+    /// their `retention_time_sec` is `None`.
     missing_rt: usize,
 }
 
@@ -582,10 +582,10 @@ fn qtfl_spectra(
                 continue;
             }
         };
-        let rt_ms = retention_time_ms.get(i).copied().unwrap_or_else(|| {
+        let rt_ms = retention_time_ms.get(i).copied();
+        if rt_ms.is_none() {
             out.missing_rt += 1;
-            0
-        });
+        }
         let is_ms1 = records[i].event_id <= 1;
         let id = i + 1;
         let native_id = format!("scan={id}");
@@ -599,7 +599,7 @@ fn qtfl_spectra(
             .with_ms_level(if is_ms1 { 1 } else { 2 })
             .with_scan_mode(ScanMode::Centroid)
             .with_analyzer(Analyzer::TOFMS)
-            .with_retention_time_sec(rt_ms as f64 / 1000.0)
+            .with_retention_time_sec(rt_ms.map(|ms| f64::from(ms) / 1000.0))
             .with_base_peak_intensity(spec.base_peak_intensity)
             .with_peaks(spec.mz, spec.intensity);
         if !is_ms1 {
@@ -647,13 +647,10 @@ fn ttfl_spectra(
             out.push_err("IT-TOF", i, "no clean RLE payload boundary");
             continue;
         };
-        let rt_ms = retention_time_ms
-            .get(subset.entry_i)
-            .copied()
-            .unwrap_or_else(|| {
-                out.missing_rt += 1;
-                0
-            });
+        let rt_ms = retention_time_ms.get(subset.entry_i).copied();
+        if rt_ms.is_none() {
+            out.missing_rt += 1;
+        }
         let id = i + 1;
         let mz = match calibration {
             Some(cal) => spec.index_axis.iter().map(|&i| cal.mz(i)).collect(),
@@ -674,7 +671,7 @@ fn ttfl_spectra(
         .with_ms_level(1)
         .with_scan_mode(ScanMode::Profile)
         .with_analyzer(Analyzer::TOFMS)
-        .with_retention_time_sec(rt_ms as f64 / 1000.0)
+        .with_retention_time_sec(rt_ms.map(|ms| f64::from(ms) / 1000.0))
         .with_peaks(mz, spec.intensity);
         out.records.push(Ok(rec));
     }
@@ -809,7 +806,7 @@ impl SpectrumSource for Reader {
         self.skipped_scans = built.skipped;
         if built.missing_rt > 0 {
             log::warn!(
-                "openszraw: {}: {} spectra have no Retention Time record; their retention time is reported as 0",
+                "openszraw: {}: {} spectra have no Retention Time record; their retention time is left unset, so mzML export fails on them unless the writer skips bad records",
                 self.stem,
                 built.missing_rt
             );

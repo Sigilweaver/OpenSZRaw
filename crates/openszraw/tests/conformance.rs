@@ -17,8 +17,8 @@
 //! broken download fails CI instead of silently skipping - see
 //! Sigilweaver/OpenSZRaw#32.
 
-use openmassspec_core::conformance::assert_source_invariants;
-use openmassspec_core::SpectrumSource;
+use openmassspec_core::conformance::{assert_iter_invariants, assert_source_invariants};
+use openmassspec_core::{RecordProblem, SpectrumRecord, SpectrumSource};
 use openszraw::reader::Reader;
 use std::path::{Path, PathBuf};
 
@@ -43,6 +43,43 @@ fn fixture(accession: &str, file: &str) -> PathBuf {
         .find(|p| p.exists())
         .cloned()
         .unwrap_or_else(|| candidates[0].clone())
+}
+
+/// Count the spectra a reader yields whose m/z array is not ascending
+/// (`SpectrumRecord::validate` reports `UnsortedMz`), and assert that no
+/// other record problem occurs. IT-TOF and single-quadrupole `.lcd` files
+/// have such spectra (README, Known issues); Core's mzML writer rejects
+/// them by default.
+fn count_unsorted_mz(reader: &mut Reader) -> usize {
+    let mut unsorted = 0;
+    for rec in reader.iter_spectra() {
+        let rec = rec.expect("every scan decodes");
+        match rec.validate() {
+            Ok(()) => {}
+            Err(RecordProblem::UnsortedMz { .. }) => unsorted += 1,
+            Err(other) => panic!("{}: unexpected record problem {other:?}", rec.native_id),
+        }
+    }
+    unsorted
+}
+
+/// The conformance invariants for a variant whose spectra can have an
+/// unsorted m/z array: every invariant except m/z order, which
+/// `count_unsorted_mz` covers. Peaks are reordered by m/z on a copy of
+/// each record; the reader's own output stays as decoded.
+fn assert_invariants_except_mz_order(reader: &mut Reader) -> usize {
+    let spectra: Vec<SpectrumRecord> = reader
+        .iter_spectra()
+        .map(|r| {
+            let mut rec = r.expect("every scan decodes");
+            let mut order: Vec<usize> = (0..rec.mz.len()).collect();
+            order.sort_by(|&a, &b| rec.mz[a].total_cmp(&rec.mz[b]));
+            rec.mz = order.iter().map(|&i| rec.mz[i]).collect();
+            rec.intensity = order.iter().map(|&i| rec.intensity[i]).collect();
+            rec
+        })
+        .collect();
+    assert_iter_invariants(spectra).expect("conformance invariants failed")
 }
 
 fn qgd_profile_fixture() -> PathBuf {
@@ -145,13 +182,11 @@ fn qgd_profile_peaks_are_plausible() {
     // linear GC acquisition, no interleaving).
     let mut last_rt = f64::MIN;
     for s in &spectra {
-        assert!(
-            s.retention_time_sec + 1e-6 >= last_rt,
-            "RT regressed: {} -> {}",
-            last_rt,
-            s.retention_time_sec
-        );
-        last_rt = s.retention_time_sec;
+        let rt = s
+            .retention_time_sec
+            .unwrap_or_else(|| panic!("spectrum {} has no retention time", s.native_id));
+        assert!(rt + 1e-6 >= last_rt, "RT regressed: {} -> {}", last_rt, rt);
+        last_rt = rt;
     }
 }
 
@@ -258,7 +293,7 @@ fn ttfl_conformance() {
     let Some(mut reader) = open_or_skip(&ttfl_fixture()) else {
         return;
     };
-    let n = assert_source_invariants(&mut reader).expect("conformance invariants failed");
+    let n = assert_invariants_except_mz_order(&mut reader);
     assert!(n > 0, "expected at least one spectrum");
     println!("ttfl: {n} spectra");
 }
@@ -268,7 +303,7 @@ fn ttfl_partial_block_conformance() {
     let Some(mut reader) = open_or_skip(&ttfl_partial_block_fixture()) else {
         return;
     };
-    let n = assert_source_invariants(&mut reader).expect("conformance invariants failed");
+    let n = assert_invariants_except_mz_order(&mut reader);
     assert!(n > 0, "expected at least one spectrum");
     println!("ttfl (2-channel, partial trailing block): {n} spectra");
 }
@@ -417,9 +452,32 @@ fn single_quad_conformance() {
     let Some(mut reader) = open_or_skip(&single_quad_fixture()) else {
         return;
     };
-    let n = assert_source_invariants(&mut reader).expect("conformance invariants failed");
+    let n = assert_invariants_except_mz_order(&mut reader);
     assert!(n > 0, "expected at least one spectrum");
     println!("single-quad: {n} spectra");
+}
+
+/// Spectra with an unsorted m/z array reach the caller as decoded, so
+/// Core's mzML writer rejects them (`RecordProblem::UnsortedMz`) instead
+/// of writing a wrong spectrum.
+#[test]
+fn single_quad_unsorted_mz_is_reported_not_hidden() {
+    let Some(mut reader) = open_or_skip(&single_quad_fixture()) else {
+        return;
+    };
+    let unsorted = count_unsorted_mz(&mut reader);
+    assert!(unsorted > 0, "expected unsorted spectra in this fixture");
+    println!("single-quad: {unsorted} spectra with unsorted m/z");
+}
+
+#[test]
+fn ttfl_unsorted_mz_is_reported_not_hidden() {
+    let Some(mut reader) = open_or_skip(&ttfl_fixture()) else {
+        return;
+    };
+    let unsorted = count_unsorted_mz(&mut reader);
+    assert!(unsorted > 0, "expected unsorted spectra in this fixture");
+    println!("ttfl: {unsorted} spectra with unsorted m/z");
 }
 
 /// See `docs/format/07-mass-raw-data-single-quad.md`: `raw::mass_raw`
@@ -467,12 +525,10 @@ fn single_quad_peaks_are_plausible() {
     // docs/format/07).
     let mut last_rt = f64::MIN;
     for s in &spectra {
-        assert!(
-            s.retention_time_sec + 1e-6 >= last_rt,
-            "RT regressed: {} -> {}",
-            last_rt,
-            s.retention_time_sec
-        );
-        last_rt = s.retention_time_sec;
+        let rt = s
+            .retention_time_sec
+            .unwrap_or_else(|| panic!("spectrum {} has no retention time", s.native_id));
+        assert!(rt + 1e-6 >= last_rt, "RT regressed: {} -> {}", last_rt, rt);
+        last_rt = rt;
     }
 }
