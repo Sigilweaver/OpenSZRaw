@@ -52,14 +52,15 @@ from checks run on the public validation corpus (see
   mzML export marks the activation as unknown (an `openmassspec: activation`
   userParam with value `unknown`) and writes no collision energy, so the
   `unknown_collision_energy_unit` check never fires for this reader.
-- **mzML export stops on IT-TOF and single quadrupole `.lcd` files with
-  unsorted m/z.** Core's writer rejects a spectrum whose m/z array is not
-  ascending (`RecordProblem::UnsortedMz`) and the reader returns the
-  array as decoded. It affects the files named in the two m/z items above
-  (IT-TOF: 216 of 1,340 spectra in `PXD020792/UY02-01-01p400.LCD`;
-  single quadrupole: 434 of 2,400 in `MTBLS1960/E1.lcd`). There is no
-  `--allow` check for it. `RecordErrorPolicy::Skip` leaves those spectra out
-  and counts them in `WriteSummary::spectra_invalid`.
+- **mzML export fails by default on most IT-TOF and all sampled single
+  quadrupole `.lcd` files.** Core's writer rejects a spectrum whose m/z
+  array is not ascending (`RecordProblem::UnsortedMz`), and the reader
+  returns the array as decoded (see the two m/z items above). Of the
+  public files sampled, `PXD025121` (all 31), `PXD020792` (all 5),
+  `MTBLS688` (6 sampled) and `MTBLS1960` (all 8) fail; 9 to 97 percent of
+  each file's spectra are unsorted. `MTBLS432` (6 sampled) converts. There
+  is no `--allow` check for this: `RecordErrorPolicy::Skip` leaves the
+  unsorted spectra out and counts them in `WriteSummary::spectra_invalid`.
 - **Spectra with no `Retention Time` record have no retention time.**
   Core's writer rejects them (`MissingRetentionTime`). No corpus file
   checked has this.
@@ -70,10 +71,12 @@ from checks run on the public validation corpus (see
 - **No TIC or base-peak chromatograms are produced.** LC detector
   chromatograms are decoded only for the few files whose format is
   understood.
-- **About 0.2 percent of QTOF scans fail to decode.** Each one is an
+- **About 0.2 percent of QTOF scans fail to decode** (31 to 81 of about
+  7,400 per file in `MTBLS14820`, "unsupported intensity width"). Each one is an
   `Err` item from `iter_spectra` (counted by `Reader::skipped_scans()`),
   so mzML export of an affected file stops there unless the writer is
-  told to skip bad records (`RecordErrorPolicy::Skip`). In Python,
+  told to skip bad records (`RecordErrorPolicy::Skip`); there is no
+  `--allow` check for it. In Python,
   `RawReader` and `iter_spectra` raise `RuntimeError` for such a scan
   unless called with `skip_errors=True`.
 
