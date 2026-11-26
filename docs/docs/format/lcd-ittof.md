@@ -69,8 +69,9 @@ scans, so the reader does not clamp or assume any upper bound on it.
 The fit described below is exact to the tuning data, but an independent
 check on sample spectra found no isotope structure (most common peak
 spacings 0.23 to 0.26 Da) and no cluster of known background ions in 4
-IT-TOF accessions, and many spectra are not sorted by m/z. Treat IT-TOF
-m/z values as unverified.
+IT-TOF accessions. Treat IT-TOF m/z values as unverified. Peaks at or
+below the calibration intercept have no m/z and are left out and flagged
+(see [Known limitations](./known-limitations)).
 
 The RLE payload's reconstructed position is a raw digitizer/TOF time-bin
 index. The reader converts it to physical m/z using a per-file

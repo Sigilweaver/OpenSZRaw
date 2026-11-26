@@ -76,3 +76,46 @@ def test_core4_record_fields():
     assert precursor["collision_energies"] == []
     assert precursor["target_mz"] is not None
     assert precursor["analyzer"] is None or precursor["analyzer"] in {"tqms", "sqms", "tof"}
+
+
+def _fixture_path() -> Path:
+    path = Path(os.environ.get("OPENSZRAW_TEST_FILE", "corpus/PXD034978_49_27a__8122021_11.qgd"))
+    if not path.is_file():
+        if os.environ.get("REQUIRE_CORPUS") == "1":
+            pytest.fail(f"REQUIRE_CORPUS=1 but test file is missing: {path}")
+        pytest.skip("set OPENSZRAW_TEST_FILE to a QGD or LCD file")
+    return path
+
+
+def test_spectrum_warnings_field():
+    """`warnings` lists what the reader flagged on a spectrum, as code and message."""
+    reader = openszraw.RawReader(str(_fixture_path()))
+    for i in range(min(reader.scan_count, 50)):
+        for warning in reader.read_spectrum(i).warnings:
+            assert set(warning) == {"code", "message"}
+            assert warning["code"] and warning["message"]
+    # A file with no undecodable scans skips nothing, and the stream says so.
+    stream = openszraw.iter_spectra(str(_fixture_path()), skip_errors=True)
+    assert stream.skipped_scans == 0
+    assert sum(1 for _ in stream) == reader.scan_count
+
+
+def test_skip_errors_counts_and_warns():
+    """Scans left out under `skip_errors=True` are counted and reported, never silent.
+
+    Needs a file with undecodable scans (for example an MTBLS14820 QTOF `.lcd`).
+    """
+    value = os.environ.get("OPENSZRAW_TEST_SKIP_FILE")
+    if not value or not Path(value).is_file():
+        pytest.skip("set OPENSZRAW_TEST_SKIP_FILE to a file with undecodable scans")
+    path = str(value)
+    with pytest.raises(RuntimeError):
+        list(openszraw.iter_spectra(path))
+    with pytest.warns(RuntimeWarning, match="could not be decoded"):
+        reader = openszraw.RawReader(path, skip_errors=True)
+    assert reader.skipped_scans > 0
+    stream = openszraw.iter_spectra(path, skip_errors=True)
+    with pytest.warns(RuntimeWarning, match="could not be decoded"):
+        kept = sum(1 for _ in stream)
+    assert stream.skipped_scans == reader.skipped_scans
+    assert kept == reader.scan_count

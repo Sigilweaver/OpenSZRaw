@@ -227,9 +227,9 @@ claims:
 A later physics check on sample spectra did not support this calibration:
 an isotope-spacing scan on an MTBLS432 file found no isotope structure
 (most common spacings 0.23 to 0.26 Da, flat), a background-ion check
-across 4 IT-TOF accessions found no cluster (offsets -1,200 to +2,100 ppm),
-and 21 of 29 sampled files contain spectra whose m/z array is not sorted.
-The fit to the tuning ladder below holds; whether it maps the RLE payload
+across 4 IT-TOF accessions found no cluster (offsets -1,200 to +2,100 ppm).
+Indices at or below the intercept `b` have no m/z and are left out of the
+spectrum (see `docs/format/06-known-limitations.md`). The fit to the tuning ladder below holds; whether it maps the RLE payload
 index to true m/z is open.
 
 Resolves Sigilweaver/OpenSZRaw#1. The RLE stream's implicit index axis

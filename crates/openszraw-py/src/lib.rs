@@ -1,13 +1,15 @@
 // Python bindings for the Shimadzu LabSolutions reader.
 
 use std::collections::BTreeMap;
-use std::sync::{mpsc, Mutex};
+use std::ffi::CString;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 
 use ::openszraw::reader::Reader;
 use openmassspec_core::{
     ChromatogramRecord, CvTerm, PrecursorInfo, RunMetadata, SpectrumRecord, SpectrumSource,
 };
-use pyo3::exceptions::{PyIndexError, PyRuntimeError};
+use pyo3::exceptions::{PyIndexError, PyRuntimeError, PyRuntimeWarning};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -17,6 +19,16 @@ fn to_py_err(e: ::openszraw::Error) -> PyErr {
 
 fn core_to_py_err(e: openmassspec_core::Error) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
+}
+
+/// Raise a Python `RuntimeWarning` that `skipped` scans of `path` were left
+/// out because they could not be decoded.
+fn warn_skipped(py: Python<'_>, path: &str, skipped: usize) -> PyResult<()> {
+    let message = CString::new(format!(
+        "openszraw: {skipped} scan(s) in {path} could not be decoded and were skipped (skip_errors=True); the count is in `skipped_scans`"
+    ))
+    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    PyErr::warn(py, &py.get_type::<PyRuntimeWarning>(), &message, 1)
 }
 
 fn cv_term_dict<'py>(py: Python<'py>, term: &CvTerm) -> PyResult<Bound<'py, PyDict>> {
@@ -226,6 +238,19 @@ impl Spectrum {
     fn extra(&self) -> BTreeMap<String, String> {
         self.rec.extra.clone()
     }
+    /// Warnings the reader attached to this spectrum, as `{"code",
+    /// "message"}` dicts. Empty when the spectrum is as decoded.
+    #[getter]
+    fn warnings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        let out = PyList::empty(py);
+        for w in &self.rec.warnings {
+            let d = PyDict::new(py);
+            d.set_item("code", w.kind.code())?;
+            d.set_item("message", &w.message)?;
+            out.append(d)?;
+        }
+        Ok(out)
+    }
 
     fn __len__(&self) -> usize {
         self.rec.mz.len()
@@ -249,10 +274,11 @@ pub struct RawReader {
 impl RawReader {
     /// Open and decode a file. A source scan that cannot be decoded
     /// raises `RuntimeError`, unless `skip_errors=True`, in which case it
-    /// is left out and counted in `skipped_scans`.
+    /// is left out, counted in `skipped_scans` and reported once with a
+    /// `RuntimeWarning`.
     #[new]
     #[pyo3(signature = (path, skip_errors = false))]
-    fn new(path: &str, skip_errors: bool) -> PyResult<Self> {
+    fn new(py: Python<'_>, path: &str, skip_errors: bool) -> PyResult<Self> {
         let mut reader = Reader::open(path).map_err(to_py_err)?;
         let mut spectra = Vec::new();
         for rec in reader.iter_spectra() {
@@ -261,6 +287,10 @@ impl RawReader {
                 Err(_) if skip_errors => {}
                 Err(e) => return Err(core_to_py_err(e)),
             }
+        }
+        let skipped = reader.skipped_scans();
+        if skipped > 0 {
+            warn_skipped(py, path, skipped)?;
         }
         Ok(Self {
             path: path.to_string(),
@@ -353,12 +383,24 @@ struct SpectrumIter {
     rx: Mutex<mpsc::Receiver<StreamMsg>>,
     _handle: std::thread::JoinHandle<()>,
     finished: bool,
+    path: String,
+    /// Scans left out so far under `skip_errors=True`, updated by the
+    /// decoding thread.
+    skipped: Arc<AtomicUsize>,
 }
 
 #[pymethods]
 impl SpectrumIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
+    }
+
+    /// Source scans that could not be decoded and were left out
+    /// (`skip_errors=True`). The count so far while iterating, final once
+    /// the iteration has ended. Always 0 when `skip_errors=False`.
+    #[getter]
+    fn skipped_scans(&self) -> usize {
+        self.skipped.load(Ordering::Acquire)
     }
 
     fn __next__(mut slf: PyRefMut<'_, Self>, py: Python<'_>) -> PyResult<Option<Spectrum>> {
@@ -376,6 +418,10 @@ impl SpectrumIter {
             Ok(StreamMsg::Record(rec)) => Ok(Some(Spectrum { rec: *rec })),
             Ok(StreamMsg::Done(Ok(()))) => {
                 slf.finished = true;
+                let skipped = slf.skipped.load(Ordering::Acquire);
+                if skipped > 0 {
+                    warn_skipped(py, &slf.path, skipped)?;
+                }
                 Ok(None)
             }
             Ok(StreamMsg::Done(Err(e))) | Err(e) => {
@@ -388,17 +434,25 @@ impl SpectrumIter {
 
 /// Decode spectra one at a time without buffering the whole acquisition.
 /// A source scan that cannot be decoded raises `RuntimeError` and ends
-/// the iteration, unless `skip_errors=True`, in which case it is left out.
+/// the iteration, unless `skip_errors=True`, in which case it is left out,
+/// counted in the iterator's `skipped_scans`, and reported with a
+/// `RuntimeWarning` when the iteration ends.
 #[pyfunction]
 #[pyo3(signature = (path, skip_errors = false))]
 fn iter_spectra(py: Python<'_>, path: String, skip_errors: bool) -> PyResult<Py<SpectrumIter>> {
     let (tx, rx) = mpsc::sync_channel(1);
-    let handle = std::thread::spawn(move || match Reader::open(&path) {
+    let skipped = Arc::new(AtomicUsize::new(0));
+    let thread_skipped = Arc::clone(&skipped);
+    let thread_path = path.clone();
+    let handle = std::thread::spawn(move || match Reader::open(&thread_path) {
         Ok(mut reader) => {
             for rec in reader.iter_spectra() {
                 let rec = match rec {
                     Ok(rec) => rec,
-                    Err(_) if skip_errors => continue,
+                    Err(_) if skip_errors => {
+                        thread_skipped.fetch_add(1, Ordering::Release);
+                        continue;
+                    }
                     Err(e) => {
                         let _ = tx.send(StreamMsg::Done(Err(e.to_string())));
                         return;
@@ -420,6 +474,8 @@ fn iter_spectra(py: Python<'_>, path: String, skip_errors: bool) -> PyResult<Py<
             rx: Mutex::new(rx),
             _handle: handle,
             finished: false,
+            path,
+            skipped,
         },
     )
 }

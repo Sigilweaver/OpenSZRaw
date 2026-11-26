@@ -17,9 +17,9 @@
 //! broken download fails CI instead of silently skipping - see
 //! Sigilweaver/OpenSZRaw#32.
 
-use openmassspec_core::conformance::{assert_iter_invariants, assert_source_invariants};
-use openmassspec_core::{RecordProblem, SpectrumRecord, SpectrumSource};
-use openszraw::reader::Reader;
+use openmassspec_core::conformance::assert_source_invariants;
+use openmassspec_core::{SpectrumRecord, SpectrumSource, WarningKind};
+use openszraw::reader::{Reader, MZ_REORDERED, UNCALIBRATED_PEAKS_DROPPED};
 use std::path::{Path, PathBuf};
 
 /// Resolve `<accession>/<file>` against the lookup order in the module
@@ -43,43 +43,6 @@ fn fixture(accession: &str, file: &str) -> PathBuf {
         .find(|p| p.exists())
         .cloned()
         .unwrap_or_else(|| candidates[0].clone())
-}
-
-/// Count the spectra a reader yields whose m/z array is not ascending
-/// (`SpectrumRecord::validate` reports `UnsortedMz`), and assert that no
-/// other record problem occurs. IT-TOF and single-quadrupole `.lcd` files
-/// have such spectra (README, Known issues); Core's mzML writer rejects
-/// them by default.
-fn count_unsorted_mz(reader: &mut Reader) -> usize {
-    let mut unsorted = 0;
-    for rec in reader.iter_spectra() {
-        let rec = rec.expect("every scan decodes");
-        match rec.validate() {
-            Ok(()) => {}
-            Err(RecordProblem::UnsortedMz { .. }) => unsorted += 1,
-            Err(other) => panic!("{}: unexpected record problem {other:?}", rec.native_id),
-        }
-    }
-    unsorted
-}
-
-/// The conformance invariants for a variant whose spectra can have an
-/// unsorted m/z array: every invariant except m/z order, which
-/// `count_unsorted_mz` covers. Peaks are reordered by m/z on a copy of
-/// each record; the reader's own output stays as decoded.
-fn assert_invariants_except_mz_order(reader: &mut Reader) -> usize {
-    let spectra: Vec<SpectrumRecord> = reader
-        .iter_spectra()
-        .map(|r| {
-            let mut rec = r.expect("every scan decodes");
-            let mut order: Vec<usize> = (0..rec.mz.len()).collect();
-            order.sort_by(|&a, &b| rec.mz[a].total_cmp(&rec.mz[b]));
-            rec.mz = order.iter().map(|&i| rec.mz[i]).collect();
-            rec.intensity = order.iter().map(|&i| rec.intensity[i]).collect();
-            rec
-        })
-        .collect();
-    assert_iter_invariants(spectra).expect("conformance invariants failed")
 }
 
 fn qgd_profile_fixture() -> PathBuf {
@@ -293,7 +256,7 @@ fn ttfl_conformance() {
     let Some(mut reader) = open_or_skip(&ttfl_fixture()) else {
         return;
     };
-    let n = assert_invariants_except_mz_order(&mut reader);
+    let n = assert_source_invariants(&mut reader).expect("conformance invariants failed");
     assert!(n > 0, "expected at least one spectrum");
     println!("ttfl: {n} spectra");
 }
@@ -303,7 +266,7 @@ fn ttfl_partial_block_conformance() {
     let Some(mut reader) = open_or_skip(&ttfl_partial_block_fixture()) else {
         return;
     };
-    let n = assert_invariants_except_mz_order(&mut reader);
+    let n = assert_source_invariants(&mut reader).expect("conformance invariants failed");
     assert!(n > 0, "expected at least one spectrum");
     println!("ttfl (2-channel, partial trailing block): {n} spectra");
 }
@@ -452,32 +415,106 @@ fn single_quad_conformance() {
     let Some(mut reader) = open_or_skip(&single_quad_fixture()) else {
         return;
     };
-    let n = assert_invariants_except_mz_order(&mut reader);
+    let n = assert_source_invariants(&mut reader).expect("conformance invariants failed");
     assert!(n > 0, "expected at least one spectrum");
     println!("single-quad: {n} spectra");
 }
 
-/// Spectra with an unsorted m/z array reach the caller as decoded, so
-/// Core's mzML writer rejects them (`RecordProblem::UnsortedMz`) instead
-/// of writing a wrong spectrum.
+/// Every spectrum a variant yields passes Core's record checks, and a
+/// spectrum the reader changed to get there carries the warning that says so.
+fn all_records(reader: &mut Reader) -> Vec<SpectrumRecord> {
+    reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes")
+}
+
+fn warning_codes(rec: &SpectrumRecord) -> Vec<&str> {
+    rec.warnings.iter().map(|w| w.kind.code()).collect()
+}
+
+/// A single-quadrupole scan whose stored pairs are out of m/z order is
+/// sorted as pairs and flagged with the count of displaced pairs; the
+/// intensities are the stored ones.
 #[test]
-fn single_quad_unsorted_mz_is_reported_not_hidden() {
+fn single_quad_reordered_pairs_are_sorted_and_flagged() {
     let Some(mut reader) = open_or_skip(&single_quad_fixture()) else {
         return;
     };
-    let unsorted = count_unsorted_mz(&mut reader);
-    assert!(unsorted > 0, "expected unsorted spectra in this fixture");
-    println!("single-quad: {unsorted} spectra with unsorted m/z");
+    let spectra = all_records(&mut reader);
+    let mut flagged = 0;
+    for s in &spectra {
+        s.validate()
+            .unwrap_or_else(|e| panic!("{}: {e:?}", s.native_id));
+        let has_warning = s.warnings.iter().any(|w| w.kind.code() == MZ_REORDERED);
+        let count = s.extra.get("openszraw.mz_reordered_pairs");
+        assert_eq!(has_warning, count.is_some(), "{}", s.native_id);
+        if let Some(count) = count {
+            assert!(count.parse::<usize>().expect("count") > 0);
+            flagged += 1;
+        }
+    }
+    assert!(flagged > 0, "expected reordered spectra in this fixture");
+    println!(
+        "single-quad: {flagged} of {} spectra reordered",
+        spectra.len()
+    );
 }
 
+/// An IT-TOF peak at or below the calibration intercept has no m/z. It is
+/// left out, counted on the record, flagged, and kept in `extra`; every
+/// spectrum is then in m/z order with no stored value altered.
 #[test]
-fn ttfl_unsorted_mz_is_reported_not_hidden() {
+fn ttfl_uncalibrated_peaks_are_dropped_counted_and_flagged() {
     let Some(mut reader) = open_or_skip(&ttfl_fixture()) else {
         return;
     };
-    let unsorted = count_unsorted_mz(&mut reader);
-    assert!(unsorted > 0, "expected unsorted spectra in this fixture");
-    println!("ttfl: {unsorted} spectra with unsorted m/z");
+    let spectra = all_records(&mut reader);
+    let mut flagged = 0;
+    for s in &spectra {
+        s.validate()
+            .unwrap_or_else(|e| panic!("{}: {e:?}", s.native_id));
+        let has_warning = s
+            .warnings
+            .iter()
+            .any(|w| w.kind.code() == UNCALIBRATED_PEAKS_DROPPED);
+        let count = s.extra.get("openszraw.uncalibrated_peaks_dropped");
+        assert_eq!(has_warning, count.is_some(), "{}", s.native_id);
+        if let Some(count) = count {
+            let n: usize = count.parse().expect("count");
+            let pairs = &s.extra["openszraw.uncalibrated_peaks"];
+            assert_eq!(pairs.split(';').count(), n, "{}", s.native_id);
+            flagged += 1;
+        }
+    }
+    assert!(flagged > 0, "expected dropped peaks in this fixture");
+    println!(
+        "ttfl: {flagged} of {} spectra had peaks dropped",
+        spectra.len()
+    );
+}
+
+/// A spectrum with no peaks carries Core's `empty_spectrum` warning and
+/// declares no base peak or m/z range.
+#[test]
+fn ttfl_empty_spectra_are_flagged() {
+    let Some(mut reader) = open_or_skip(&ttfl_partial_block_fixture()) else {
+        return;
+    };
+    let spectra = all_records(&mut reader);
+    let empty: Vec<_> = spectra.iter().filter(|s| s.mz.is_empty()).collect();
+    for s in &empty {
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.kind == WarningKind::EmptySpectrum),
+            "{}: empty spectrum without the empty_spectrum warning ({:?})",
+            s.native_id,
+            warning_codes(s)
+        );
+        assert!(s.effective_base_peak().is_none() && s.low_mz.is_none() && s.high_mz.is_none());
+    }
+    println!("ttfl: {} empty spectra, all flagged", empty.len());
 }
 
 /// See `docs/format/07-mass-raw-data-single-quad.md`: `raw::mass_raw`

@@ -10,10 +10,17 @@ use std::path::Path;
 use cfb::CompoundFile;
 use openmassspec_core::{
     Analyzer, ChromatogramIter, ChromatogramRecord, CvTerm, PrecursorInfo, RunMetadata, ScanMode,
-    SpectrumIter, SpectrumRecord, SpectrumSource,
+    SpectrumIter, SpectrumRecord, SpectrumSource, Warning, WarningKind,
 };
 
 use crate::raw::{self, lc_chrom, mass_raw, qgd, qtfl, ttfl, Variant};
+
+/// Warning code on a single-quadrupole spectrum whose stored pairs were not
+/// in m/z order and were sorted.
+pub const MZ_REORDERED: &str = "openszraw.mz_reordered";
+/// Warning code on an IT-TOF spectrum from which peaks with no calibrated
+/// m/z were left out.
+pub const UNCALIBRATED_PEAKS_DROPPED: &str = "openszraw.uncalibrated_peaks_dropped";
 
 const GCMS_SPECTRUM_INDEX: &str = "GCMS Raw Data/Spectrum Index";
 const GCMS_MS_RAW_DATA: &str = "GCMS Raw Data/MS Raw Data";
@@ -126,6 +133,23 @@ impl BuiltSpectra {
             skipped: 0,
             missing_rt: 0,
         }
+    }
+
+    /// Append a decoded record. A record with no peaks carries Core's
+    /// `empty_spectrum` warning and declares no base peak or m/z range, as
+    /// the conformance harness requires.
+    fn push_ok(&mut self, mut rec: SpectrumRecord) {
+        if rec.mz.is_empty() {
+            rec.base_peak_mz = None;
+            rec.base_peak_intensity = None;
+            rec.low_mz = None;
+            rec.high_mz = None;
+            rec.warnings.push(Warning::new(
+                WarningKind::EmptySpectrum,
+                "the scan has no peaks",
+            ));
+        }
+        self.records.push(Ok(rec));
     }
 
     /// Dense output position of the next `Ok` record.
@@ -458,7 +482,7 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
                 .with_analyzer(Analyzer::SQMS)
                 .with_retention_time_sec(rt_sec)
                 .with_peaks(mz, intensity);
-                out.records.push(Ok(rec));
+                out.push_ok(rec);
             }
             qgd::QgdScan::Mrm {
                 event_id,
@@ -483,7 +507,7 @@ fn qgd_spectra(stem: &str, ms_raw: &[u8], offsets: &[u64]) -> BuiltSpectra {
                             .with_selected_mz(t.precursor_mz),
                     )
                     .with_peaks(vec![t.product_mz], vec![t.intensity]);
-                    out.records.push(Ok(rec));
+                    out.push_ok(rec);
                 }
             }
         }
@@ -521,6 +545,9 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> BuiltSpect
             }
         };
         let id = i + 1;
+        let mut mz = scan.mz;
+        let mut intensity = scan.intensity;
+        let displaced = mass_raw::sort_peaks_by_mz(&mut mz, &mut intensity);
         // Polarity: a per-scan header field alternates between exactly 2
         // values with strict scan-parity regularity (1,200/1,200 over
         // 2,400 scans in every corpus file), plausibly a
@@ -529,7 +556,7 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> BuiltSpect
         // guessed, same treatment as the TTFL channel-mode flag (see
         // `docs/format/06-known-limitations.md`). Shimadzu single-quad
         // LC-MS instruments have no FAIMS interface.
-        let rec = SpectrumRecord::new(
+        let mut rec = SpectrumRecord::new(
             out.next_index(),
             id as u32,
             format!("source={stem} start={id} end={id}"),
@@ -538,8 +565,18 @@ fn single_quad_spectra(stem: &str, ms_raw: &[u8], offsets: &[u32]) -> BuiltSpect
         .with_scan_mode(ScanMode::Profile)
         .with_analyzer(Analyzer::SQMS)
         .with_retention_time_sec(scan.retention_time_ms as f64 / 1000.0)
-        .with_peaks(scan.mz, scan.intensity);
-        out.records.push(Ok(rec));
+        .with_peaks(mz, intensity);
+        if displaced > 0 {
+            rec = rec
+                .with_extra("openszraw.mz_reordered_pairs", displaced.to_string())
+                .with_warning(Warning::other(
+                    MZ_REORDERED,
+                    format!(
+                        "{displaced} stored (m/z, intensity) pair(s) were out of m/z order and were moved to their sorted position; no value changed"
+                    ),
+                ));
+        }
+        out.push_ok(rec);
     }
     out
 }
@@ -607,7 +644,7 @@ fn qtfl_spectra(
                 ms1_native_id_by_cycle.get(&records[i].cycle_index).cloned(),
             ));
         }
-        out.records.push(Ok(rec));
+        out.push_ok(rec);
     }
     out
 }
@@ -652,16 +689,33 @@ fn ttfl_spectra(
             out.missing_rt += 1;
         }
         let id = i + 1;
-        let mz = match calibration {
-            Some(cal) => spec.index_axis.iter().map(|&i| cal.mz(i)).collect(),
-            None => spec.index_axis,
+        // A time-bin index at or below the calibration intercept `b` has
+        // no m/z: `((index - b) / a)^2` folds it back to a small positive
+        // value that is not a mass. Those peaks are left out of the arrays
+        // and kept, with their index, in `extra`.
+        let mut dropped: Vec<(f64, f32)> = Vec::new();
+        let (mz, intensity) = match calibration {
+            Some(cal) => {
+                let mut mz = Vec::with_capacity(spec.index_axis.len());
+                let mut intensity = Vec::with_capacity(spec.index_axis.len());
+                for (&index, &height) in spec.index_axis.iter().zip(spec.intensity.iter()) {
+                    if index <= cal.b {
+                        dropped.push((index, height));
+                    } else {
+                        mz.push(cal.mz(index));
+                        intensity.push(height);
+                    }
+                }
+                (mz, intensity)
+            }
+            None => (spec.index_axis, spec.intensity),
         };
         // Neither polarity nor MS level is recoverable per channel: the
         // header's `u32[5]` mode flag is not confirmed to map to a
         // specific polarity/level assignment - see
         // docs/format/06-known-limitations.md. Shimadzu IT-TOF
         // instruments have no FAIMS interface.
-        let rec = SpectrumRecord::new(
+        let mut rec = SpectrumRecord::new(
             out.next_index(),
             id as u32,
             format!("source={stem} start={id} end={id}"),
@@ -672,8 +726,26 @@ fn ttfl_spectra(
         .with_scan_mode(ScanMode::Profile)
         .with_analyzer(Analyzer::TOFMS)
         .with_retention_time_sec(rt_ms.map(|ms| f64::from(ms) / 1000.0))
-        .with_peaks(mz, spec.intensity);
-        out.records.push(Ok(rec));
+        .with_peaks(mz, intensity);
+        if !dropped.is_empty() {
+            let n = dropped.len();
+            let pairs: Vec<String> = dropped
+                .iter()
+                .map(|(index, height)| format!("{index}:{height}"))
+                .collect();
+            // `total_ion_current` stays undeclared, so it is the sum of the
+            // peaks written; the left-out intensities are not in it.
+            rec = rec
+                .with_extra("openszraw.uncalibrated_peaks_dropped", n.to_string())
+                .with_extra("openszraw.uncalibrated_peaks", pairs.join(";"))
+                .with_warning(Warning::other(
+                    UNCALIBRATED_PEAKS_DROPPED,
+                    format!(
+                        "{n} peak(s) with a time-bin index at or below the calibration intercept have no m/z and were left out; their index:intensity pairs are in extra openszraw.uncalibrated_peaks"
+                    ),
+                ));
+        }
+        out.push_ok(rec);
     }
     out
 }
@@ -1149,5 +1221,120 @@ mod tests {
                 (1, 3, "source=f start=3 end=3".to_string()),
             ]
         );
+    }
+
+    fn ttfl_scan(skip: u16, values: &[u16]) -> Vec<u8> {
+        let mut scan = vec![0u8; ttfl::SCAN_HEADER_SIZE];
+        scan.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        scan.extend_from_slice(&(0x8000u16 + values.len() as u16).to_le_bytes());
+        scan.extend_from_slice(&skip.to_le_bytes());
+        for v in values {
+            scan.extend_from_slice(&v.to_le_bytes());
+        }
+        scan.extend_from_slice(&0x8000u16.to_le_bytes());
+        scan
+    }
+
+    #[test]
+    fn ttfl_peaks_at_or_below_the_intercept_are_dropped_counted_and_flagged() {
+        // Indices 90..=95 with intercept 93.0: 90, 91, 92 and 93 have no m/z.
+        let ms_raw = ttfl_scan(90, &[10, 20, 30, 40, 50, 60]);
+        let subsets = vec![ttfl::DataIndexSubset {
+            entry_i: 0,
+            sub_i: 0,
+            offset: 0,
+        }];
+        let bounds = vec![(0, ms_raw.len() as u32)];
+        let cal = ttfl::Calibration { a: 650.0, b: 93.0 };
+        let built = ttfl_spectra("f", &ms_raw, &subsets, &bounds, &[1], Some(&cal));
+        let recs = built.spectra();
+        let rec = &recs[0];
+        assert_eq!(rec.intensity, vec![50.0, 60.0]);
+        assert_eq!(rec.mz, vec![cal.mz(94.0), cal.mz(95.0)]);
+        assert!(rec.validate().is_ok());
+        assert_eq!(rec.extra["openszraw.uncalibrated_peaks_dropped"], "4");
+        assert_eq!(
+            rec.extra["openszraw.uncalibrated_peaks"],
+            "90:10;91:20;92:30;93:40"
+        );
+        assert_eq!(
+            rec.warnings
+                .iter()
+                .map(|w| w.kind.code())
+                .collect::<Vec<_>>(),
+            vec![UNCALIBRATED_PEAKS_DROPPED]
+        );
+        // The declared total is the sum of what is written.
+        assert_eq!(rec.effective_tic(), 110.0);
+    }
+
+    #[test]
+    fn ttfl_spectrum_emptied_by_the_drop_is_flagged_empty_too() {
+        let ms_raw = ttfl_scan(10, &[5, 6]);
+        let subsets = vec![ttfl::DataIndexSubset {
+            entry_i: 0,
+            sub_i: 0,
+            offset: 0,
+        }];
+        let bounds = vec![(0, ms_raw.len() as u32)];
+        let cal = ttfl::Calibration { a: 650.0, b: 93.0 };
+        let built = ttfl_spectra("f", &ms_raw, &subsets, &bounds, &[1], Some(&cal));
+        let rec = &built.spectra()[0];
+        assert!(rec.mz.is_empty());
+        let codes: Vec<_> = rec.warnings.iter().map(|w| w.kind.code()).collect();
+        assert_eq!(codes, vec![UNCALIBRATED_PEAKS_DROPPED, "empty_spectrum"]);
+        assert_eq!(rec.extra["openszraw.uncalibrated_peaks_dropped"], "2");
+    }
+
+    #[test]
+    fn empty_spectrum_is_flagged_and_declares_no_base_peak_or_range() {
+        let ms_raw = vec![0u8; ttfl::SCAN_HEADER_SIZE];
+        let subsets = vec![ttfl::DataIndexSubset {
+            entry_i: 0,
+            sub_i: 0,
+            offset: 0,
+        }];
+        let bounds = vec![(0, ms_raw.len() as u32)];
+        let built = ttfl_spectra("f", &ms_raw, &subsets, &bounds, &[1], None);
+        let rec = &built.spectra()[0];
+        assert!(rec.mz.is_empty());
+        assert_eq!(rec.warnings.len(), 1);
+        assert_eq!(rec.warnings[0].kind, WarningKind::EmptySpectrum);
+        assert!(rec.base_peak_mz.is_none() && rec.base_peak_intensity.is_none());
+        assert!(rec.low_mz.is_none() && rec.high_mz.is_none());
+    }
+
+    #[test]
+    fn single_quad_displaced_pair_is_sorted_and_flagged() {
+        let mut scan = vec![0u8; mass_raw::SCAN_HEADER_SIZE];
+        LittleEndian::write_u16(&mut scan[0x36..0x38], 3);
+        for (mz10, height) in [(4038u16, 9000u16), (4000, 1), (4026, 3)] {
+            scan.extend_from_slice(&mz10.to_le_bytes());
+            scan.extend_from_slice(&height.to_le_bytes());
+        }
+        let (data, offsets) = concat(&[scan]);
+        let offsets: Vec<u32> = offsets.iter().map(|&o| o as u32).collect();
+        let built = single_quad_spectra("f", &data, &offsets);
+        let rec = &built.spectra()[0];
+        assert_eq!(rec.mz, vec![400.0, 402.6, 403.8]);
+        assert_eq!(rec.intensity, vec![1.0, 3.0, 9000.0]);
+        assert!(rec.validate().is_ok());
+        assert_eq!(rec.extra["openszraw.mz_reordered_pairs"], "1");
+        assert_eq!(rec.warnings.len(), 1);
+        assert_eq!(rec.warnings[0].kind.code(), MZ_REORDERED);
+    }
+
+    #[test]
+    fn single_quad_sorted_scan_carries_no_warning() {
+        let mut scan = vec![0u8; mass_raw::SCAN_HEADER_SIZE];
+        LittleEndian::write_u16(&mut scan[0x36..0x38], 1);
+        scan.extend_from_slice(&4000u16.to_le_bytes());
+        scan.extend_from_slice(&7u16.to_le_bytes());
+        let (data, offsets) = concat(&[scan]);
+        let offsets: Vec<u32> = offsets.iter().map(|&o| o as u32).collect();
+        let built = single_quad_spectra("f", &data, &offsets);
+        let rec = &built.spectra()[0];
+        assert!(rec.warnings.is_empty());
+        assert!(rec.extra.is_empty());
     }
 }
