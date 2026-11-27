@@ -25,9 +25,18 @@ identification or accurate-mass work.
 
 **The resulting m/z values are not validated.** An independent check on
 sample spectra found no isotope structure and no cluster of known
-background ions, and 21 of 29 sampled files contain spectra whose m/z
-array is not sorted. The calibration below fits the tuning data exactly,
+background ions. The calibration below fits the tuning data exactly,
 but that does not show it maps the scan payload correctly.
+
+**Peaks at or below the calibration intercept have no m/z.** The inverted
+fit `((index - b) / a)^2` folds an index at or below `b` back to a small
+positive value (0.0003 to 0.025 in the files checked), so m/z falls toward
+0 at `index = b` and rises again. The reader leaves those peaks out of
+`mz` and `intensity`, counts them in
+`extra["openszraw.uncalibrated_peaks_dropped"]`, keeps their `index:intensity`
+pairs in `extra["openszraw.uncalibrated_peaks"]` and adds the warning
+`openszraw.uncalibrated_peaks_dropped`. Every remaining index is above `b`,
+so m/z is ascending.
 
 The reconstructed index axis from the run-length-encoded payload (see
 [LC-MS IT-TOF](./lcd-ittof)) is a raw digitizer/TOF time-bin index. The

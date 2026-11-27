@@ -249,6 +249,22 @@ file's real variant) instead of the bare root fixes this for
 `SingleQuad` specifically; the pre-existing `QTFL RawData` version of
 the same trap is unresolved and tracked separately (section 7, #5).
 
+## Pair order within a scan
+
+In 402 to 434 of the 2,400 scans of each `MTBLS1960` file the stored
+`(m/z, intensity)` pairs are not in ascending m/z order. In `E1.lcd`
+(434 scans), removing one pair sorts the rest in 411, two in 22 and three
+in 1. The out-of-place pair is usually first (353 of 434) and usually the
+scan's highest-intensity peak (362 of 434), and it fits between its sorted
+neighbours (403.8 between 402.6 and 404.6). Each pair is read as stored and
+the summed intensity equals `TIC Data`, so `single_quad_spectra` orders the
+pairs with a stable sort by m/z (`mass_raw::sort_peaks_by_mz`) and changes
+no value. The record carries the warning `openszraw.mz_reordered` and
+`extra["openszraw.mz_reordered_pairs"]`, the number of pairs that were out
+of place (the scan length minus its longest ascending run). Seven `E1.lcd`
+scans have equal m/z with different intensities; the stable sort keeps
+their stored order. Why the file stores the pair out of order is not known.
+
 ## Done means (original DISCOVERY-phase criteria, now met)
 
 A documented, evidence-backed decode of `Mass Raw Data/MS Raw Data`'s

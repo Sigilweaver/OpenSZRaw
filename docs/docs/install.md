@@ -19,7 +19,7 @@ dependencies.
 pip install openszraw
 ```
 
-Wheels are published for CPython 3.8-3.15 and PyPy on Linux, macOS, and
+One abi3 wheel per platform is published for CPython 3.10 and later on Linux, macOS, and
 Windows. To build from source instead (e.g. for a platform without a
 prebuilt wheel), use [maturin](https://www.maturin.rs/):
 

@@ -30,9 +30,18 @@ calibration is found, and falls back to the raw, uncalibrated index if no
 present. No file in the local corpus lacks one.
 
 **Open: m/z not validated.** A physics check on sample spectra found no
-isotope structure and no cluster of known background ions, and 21 of 29
-sampled files contain unsorted m/z arrays. Treat IT-TOF m/z as
+isotope structure and no cluster of known background ions. Treat IT-TOF m/z as
 unverified until this is resolved.
+
+**Peaks at or below the calibration intercept have no m/z.** The inverted
+fit `((index - b) / a)^2` folds an index at or below `b` back to a small
+positive value (0.0003 to 0.025 in the files checked), so m/z falls toward
+0 at `index = b` and rises again. The reader leaves those peaks out of
+`mz` and `intensity`, counts them in
+`extra["openszraw.uncalibrated_peaks_dropped"]`, keeps their `index:intensity`
+pairs in `extra["openszraw.uncalibrated_peaks"]` and adds the warning
+`openszraw.uncalibrated_peaks_dropped`. Every remaining index is above `b`,
+so m/z is ascending.
 
 **Open**: a small constant index-origin offset between the RLE payload's
 index convention and the tuning stream's time convention has not been

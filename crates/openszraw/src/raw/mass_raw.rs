@@ -81,9 +81,81 @@ pub fn parse_scan(scan_bytes: &[u8]) -> crate::Result<SingleQuadScan> {
     })
 }
 
+/// Put the stored `(m/z, intensity)` pairs in ascending m/z order with a
+/// stable sort, moving each pair as a unit. Returns the number of pairs that
+/// were out of place: the fewest pairs whose removal leaves the rest in order
+/// (the length minus the longest non-decreasing run), so one displaced
+/// record is 1 however far it moved, and 0 when the scan was already sorted
+/// and nothing changed.
+///
+/// Some scans store one pair (usually a high-intensity peak) away from its
+/// m/z position. Each pair is read as stored and the intensities sum to the
+/// file's `TIC Data` value, so ordering them changes no decoded value.
+///
+/// `mz` and `intensity` must have the same length and `mz` must be finite,
+/// which `parse_scan` guarantees (`u16 / 10`).
+pub fn sort_peaks_by_mz(mz: &mut Vec<f64>, intensity: &mut Vec<f32>) -> usize {
+    debug_assert_eq!(mz.len(), intensity.len());
+    if mz.windows(2).all(|w| w[0] <= w[1]) {
+        return 0;
+    }
+    // Longest non-decreasing subsequence length, by patience sorting.
+    let mut tails: Vec<f64> = Vec::new();
+    for &x in mz.iter() {
+        let pos = tails.partition_point(|&t| t <= x);
+        if pos == tails.len() {
+            tails.push(x);
+        } else {
+            tails[pos] = x;
+        }
+    }
+    let displaced = mz.len() - tails.len();
+    let mut order: Vec<usize> = (0..mz.len()).collect();
+    order.sort_by(|&a, &b| mz[a].total_cmp(&mz[b]));
+    *mz = order.iter().map(|&i| mz[i]).collect();
+    *intensity = order.iter().map(|&i| intensity[i]).collect();
+    displaced
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sort_leaves_a_sorted_scan_alone() {
+        let mut mz = vec![400.0, 402.3, 402.3];
+        let mut intensity = vec![1.0, 2.0, 3.0];
+        assert_eq!(sort_peaks_by_mz(&mut mz, &mut intensity), 0);
+        assert_eq!(mz, vec![400.0, 402.3, 402.3]);
+        assert_eq!(intensity, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn sort_moves_one_displaced_pair_and_counts_it_once() {
+        // The base peak is stored first but belongs between 402.6 and 404.6.
+        let mut mz = vec![403.8, 400.0, 401.2, 402.6, 404.6, 405.0];
+        let mut intensity = vec![9000.0, 1.0, 2.0, 3.0, 4.0, 5.0];
+        assert_eq!(sort_peaks_by_mz(&mut mz, &mut intensity), 1);
+        assert_eq!(mz, vec![400.0, 401.2, 402.6, 403.8, 404.6, 405.0]);
+        assert_eq!(intensity, vec![1.0, 2.0, 3.0, 9000.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn sort_is_stable_for_equal_mz() {
+        let mut mz = vec![401.0, 400.0, 400.0];
+        let mut intensity = vec![7.0, 1.0, 2.0];
+        assert_eq!(sort_peaks_by_mz(&mut mz, &mut intensity), 1);
+        assert_eq!(mz, vec![400.0, 400.0, 401.0]);
+        assert_eq!(intensity, vec![1.0, 2.0, 7.0]);
+    }
+
+    #[test]
+    fn sort_counts_two_displaced_pairs() {
+        let mut mz = vec![405.0, 400.0, 401.0, 402.0, 403.0, 410.0, 404.0, 411.0];
+        let mut intensity = vec![0.0; 8];
+        assert_eq!(sort_peaks_by_mz(&mut mz, &mut intensity), 2);
+        assert!(mz.windows(2).all(|w| w[0] <= w[1]));
+    }
 
     #[test]
     fn width_4_scan_roundtrip() {

@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-27
+
+### Changed
+
+- **Breaking:** the minimum Python version is 3.10 (was 3.8), and the
+  wheel is one abi3 wheel per platform built for CPython 3.10 and later
+  (PyPy has no wheel). This follows
+  [SUPPORT.md](https://github.com/Sigilweaver/ops/blob/main/SUPPORT.md).
+- **Breaking:** requires `openmassspec-core` 4.0.0 (was 3.0.0). See
+  [MIGRATING-4.0.md](https://github.com/Sigilweaver/OpenMassSpecCore/blob/main/MIGRATING-4.0.md)
+  in OpenMassSpecCore for the shared-type changes. What reaches users of
+  this crate:
+  - `SpectrumRecord::retention_time_sec` is `Option<f64>`. A scan with a
+    `Retention Time` record has `Some`.
+  - `PrecursorInfo::collision_energy` and `ce_is_nce` are replaced by
+    `collision_energies`. The reader does not decode collision energy, so
+    the list is empty on every record.
+  - mzML export applies Core 4's strict checks. Every spectrum the reader
+    yields has an ascending m/z array (see Fixed), so IT-TOF and
+    single-quadrupole `.lcd` files no longer stop the write with
+    `RecordProblem::UnsortedMz`.
+  - A spectrum with no peaks carries Core's `empty_spectrum` warning and
+    declares no base peak or m/z range. `WriteSummary::has_warnings` is
+    true for a file with empty scans; that is not a failure.
+  - Spectra with an `analyzer` of `TOFMS` are labelled `tof` in serialized
+    form and in Python.
+- **Breaking (Python):** `Spectrum.retention_time_sec` is `float | None`
+  (was `float`). The precursor dict has `collision_energies` (a list of
+  `{"value", "unit"}` dicts, empty when the file has no collision energy)
+  in place of `collision_energy` and `ce_is_nce`. Analyzer, scan mode,
+  polarity, activation and mobility labels are Core's `as_str` labels:
+  the QTOF and IT-TOF analyzer is `"tof"` (was `"tofms"`).
+- Python wheels use the `abi3-py310` PyO3 feature.
+- Python: `Spectrum.warnings` lists what the reader flagged on a spectrum
+  as `{"code", "message"}` dicts. The iterator returned by
+  `iter_spectra` has `skipped_scans`.
+
+### Fixed
+
+- IT-TOF (`.lcd`) peaks at or below the calibration intercept no longer
+  reach `mz` with an invented value. The inverted calibration folds those
+  time-bin indices back to m/z 0.0003 to 0.025, which put the m/z array
+  out of order. They are left out of `mz` and `intensity`, counted in
+  `extra["openszraw.uncalibrated_peaks_dropped"]`, kept as `index:intensity`
+  pairs in `extra["openszraw.uncalibrated_peaks"]` and flagged with the
+  warning `openszraw.uncalibrated_peaks_dropped`. Changed values on the
+  public files checked: 804 of 1.43 M peaks (PXD020792
+  `UY02-01-01p400.LCD`, 735 of 1,340 spectra), 2,591 of 1.18 M (PXD025121
+  `13.lcd`, 949 of 1,332) and 11,776 of 1.53 M (MTBLS688
+  `1_1k10_20ul_1.lcd`, 2,918 of 3,002); none in MTBLS432. `total_ion_current`
+  stays undeclared, so it is the sum of the peaks written.
+- Single-quadrupole `.lcd` scans that store one `(m/z, intensity)` pair
+  away from its m/z position are sorted as pairs (stable) and flagged with
+  the warning `openszraw.mz_reordered` and
+  `extra["openszraw.mz_reordered_pairs"]`. No value changes: the pairs are
+  as stored and the summed intensity is unchanged. 402 to 434 of 2,400
+  spectra in each of the 8 `MTBLS1960` files (E1.lcd: 434 spectra, 458
+  pairs).
+- Spectra with no peaks carry Core's `empty_spectrum` warning (the reader
+  had written them with no flag), and QTOF empty spectra no longer declare
+  a base-peak intensity.
+- Python `iter_spectra(skip_errors=True)` and `RawReader(skip_errors=True)`
+  left undecodable scans out without saying so. `iter_spectra` now counts
+  them in the iterator's `skipped_scans`, and both report the count with a
+  `RuntimeWarning`.
+- Spectra with no `Retention Time` record now carry no retention time
+  instead of 0 (IT-TOF and QTOF). Core 4's mzML writer rejects such a
+  record (`MissingRetentionTime`) rather than writing a scan at 0 seconds,
+  and `RecordErrorPolicy::Skip` counts it. The reader still logs the
+  number of affected spectra at `warn`. No corpus file checked so far has
+  this problem.
+
 ## [0.3.0] - 2026-10-11
 
 ### Breaking

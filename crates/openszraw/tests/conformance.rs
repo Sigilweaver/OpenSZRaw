@@ -18,8 +18,8 @@
 //! Sigilweaver/OpenSZRaw#32.
 
 use openmassspec_core::conformance::assert_source_invariants;
-use openmassspec_core::SpectrumSource;
-use openszraw::reader::Reader;
+use openmassspec_core::{SpectrumRecord, SpectrumSource, WarningKind};
+use openszraw::reader::{Reader, MZ_REORDERED, UNCALIBRATED_PEAKS_DROPPED};
 use std::path::{Path, PathBuf};
 
 /// Resolve `<accession>/<file>` against the lookup order in the module
@@ -145,13 +145,11 @@ fn qgd_profile_peaks_are_plausible() {
     // linear GC acquisition, no interleaving).
     let mut last_rt = f64::MIN;
     for s in &spectra {
-        assert!(
-            s.retention_time_sec + 1e-6 >= last_rt,
-            "RT regressed: {} -> {}",
-            last_rt,
-            s.retention_time_sec
-        );
-        last_rt = s.retention_time_sec;
+        let rt = s
+            .retention_time_sec
+            .unwrap_or_else(|| panic!("spectrum {} has no retention time", s.native_id));
+        assert!(rt + 1e-6 >= last_rt, "RT regressed: {} -> {}", last_rt, rt);
+        last_rt = rt;
     }
 }
 
@@ -422,6 +420,103 @@ fn single_quad_conformance() {
     println!("single-quad: {n} spectra");
 }
 
+/// Every spectrum a variant yields passes Core's record checks, and a
+/// spectrum the reader changed to get there carries the warning that says so.
+fn all_records(reader: &mut Reader) -> Vec<SpectrumRecord> {
+    reader
+        .iter_spectra()
+        .collect::<openmassspec_core::Result<_>>()
+        .expect("every scan decodes")
+}
+
+fn warning_codes(rec: &SpectrumRecord) -> Vec<&str> {
+    rec.warnings.iter().map(|w| w.kind.code()).collect()
+}
+
+/// A single-quadrupole scan whose stored pairs are out of m/z order is
+/// sorted as pairs and flagged with the count of displaced pairs; the
+/// intensities are the stored ones.
+#[test]
+fn single_quad_reordered_pairs_are_sorted_and_flagged() {
+    let Some(mut reader) = open_or_skip(&single_quad_fixture()) else {
+        return;
+    };
+    let spectra = all_records(&mut reader);
+    let mut flagged = 0;
+    for s in &spectra {
+        s.validate()
+            .unwrap_or_else(|e| panic!("{}: {e:?}", s.native_id));
+        let has_warning = s.warnings.iter().any(|w| w.kind.code() == MZ_REORDERED);
+        let count = s.extra.get("openszraw.mz_reordered_pairs");
+        assert_eq!(has_warning, count.is_some(), "{}", s.native_id);
+        if let Some(count) = count {
+            assert!(count.parse::<usize>().expect("count") > 0);
+            flagged += 1;
+        }
+    }
+    assert!(flagged > 0, "expected reordered spectra in this fixture");
+    println!(
+        "single-quad: {flagged} of {} spectra reordered",
+        spectra.len()
+    );
+}
+
+/// An IT-TOF peak at or below the calibration intercept has no m/z. It is
+/// left out, counted on the record, flagged, and kept in `extra`; every
+/// spectrum is then in m/z order with no stored value altered.
+#[test]
+fn ttfl_uncalibrated_peaks_are_dropped_counted_and_flagged() {
+    let Some(mut reader) = open_or_skip(&ttfl_fixture()) else {
+        return;
+    };
+    let spectra = all_records(&mut reader);
+    let mut flagged = 0;
+    for s in &spectra {
+        s.validate()
+            .unwrap_or_else(|e| panic!("{}: {e:?}", s.native_id));
+        let has_warning = s
+            .warnings
+            .iter()
+            .any(|w| w.kind.code() == UNCALIBRATED_PEAKS_DROPPED);
+        let count = s.extra.get("openszraw.uncalibrated_peaks_dropped");
+        assert_eq!(has_warning, count.is_some(), "{}", s.native_id);
+        if let Some(count) = count {
+            let n: usize = count.parse().expect("count");
+            let pairs = &s.extra["openszraw.uncalibrated_peaks"];
+            assert_eq!(pairs.split(';').count(), n, "{}", s.native_id);
+            flagged += 1;
+        }
+    }
+    assert!(flagged > 0, "expected dropped peaks in this fixture");
+    println!(
+        "ttfl: {flagged} of {} spectra had peaks dropped",
+        spectra.len()
+    );
+}
+
+/// A spectrum with no peaks carries Core's `empty_spectrum` warning and
+/// declares no base peak or m/z range.
+#[test]
+fn ttfl_empty_spectra_are_flagged() {
+    let Some(mut reader) = open_or_skip(&ttfl_partial_block_fixture()) else {
+        return;
+    };
+    let spectra = all_records(&mut reader);
+    let empty: Vec<_> = spectra.iter().filter(|s| s.mz.is_empty()).collect();
+    for s in &empty {
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.kind == WarningKind::EmptySpectrum),
+            "{}: empty spectrum without the empty_spectrum warning ({:?})",
+            s.native_id,
+            warning_codes(s)
+        );
+        assert!(s.effective_base_peak().is_none() && s.low_mz.is_none() && s.high_mz.is_none());
+    }
+    println!("ttfl: {} empty spectra, all flagged", empty.len());
+}
+
 /// See `docs/format/07-mass-raw-data-single-quad.md`: `raw::mass_raw`
 /// decodes full-scan profile spectra with a per-scan peak-record width
 /// (4 or 5 bytes, observed in this corpus) derived from the header's own
@@ -467,12 +562,10 @@ fn single_quad_peaks_are_plausible() {
     // docs/format/07).
     let mut last_rt = f64::MIN;
     for s in &spectra {
-        assert!(
-            s.retention_time_sec + 1e-6 >= last_rt,
-            "RT regressed: {} -> {}",
-            last_rt,
-            s.retention_time_sec
-        );
-        last_rt = s.retention_time_sec;
+        let rt = s
+            .retention_time_sec
+            .unwrap_or_else(|| panic!("spectrum {} has no retention time", s.native_id));
+        assert!(rt + 1e-6 >= last_rt, "RT regressed: {} -> {}", last_rt, rt);
+        last_rt = rt;
     }
 }
