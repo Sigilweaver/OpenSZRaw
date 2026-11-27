@@ -35,10 +35,14 @@ env:
   RUSTFLAGS: -D warnings
   QGD_PROFILE_URL: >-
     https://ftp.pride.ebi.ac.uk/pride/data/archive/2022/02/PXD019638/L-B2-Br0-1.qgd
+  QGD_PROFILE_FALLBACK_URL: >-
+    https://ftp.ebi.ac.uk/pride/data/archive/2022/02/PXD019638/L-B2-Br0-1.qgd
   QGD_PROFILE_NAME: PXD019638_L-B2-Br0-1.qgd
   QGD_PROFILE_SHA256: 830b326b209a93fab22ced649b8214c8e770378a64bfc76b2d35163df570b6a5
   QGD_MRM_URL: >-
     https://ftp.pride.ebi.ac.uk/pride/data/archive/2022/08/PXD034978/49_27a__8122021_11.qgd
+  QGD_MRM_FALLBACK_URL: >-
+    https://ftp.ebi.ac.uk/pride/data/archive/2022/08/PXD034978/49_27a__8122021_11.qgd
   QGD_MRM_NAME: PXD034978_49_27a__8122021_11.qgd
   QGD_MRM_SHA256: b220a1de56c13ac5004b2fdbae9743553b1b4400a1a2aa29e08e5d88911530e1
 
@@ -73,17 +77,15 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Download corpus fixtures for conformance tests
-        shell: bash
-        run: |
-          mkdir -p corpus
-          curl -fsSL --retry 3 --user-agent "OpenSZRaw-CI/1.0" -o "corpus/$QGD_PROFILE_NAME" "$QGD_PROFILE_URL"
-          curl -fsSL --retry 3 --user-agent "OpenSZRaw-CI/1.0" -o "corpus/$QGD_MRM_NAME" "$QGD_MRM_URL"
-          if command -v sha256sum >/dev/null; then sha=(sha256sum); else sha=(shasum -a 256); fi
-          printf '%s  %s\n' \
-            "$QGD_PROFILE_SHA256" "corpus/$QGD_PROFILE_NAME" \
-            "$QGD_MRM_SHA256" "corpus/$QGD_MRM_NAME" | "${sha[@]}" -c -
-          du -sh "corpus/$QGD_PROFILE_NAME" "corpus/$QGD_MRM_NAME"
+      - name: Fetch corpus fixtures for conformance tests
+        timeout-minutes: 20
+        uses: Sigilweaver/ops/.github/actions/fetch-fixture@cf88ab9d4e06ce360ee0659bde8d10081ea4de17
+        with:
+          destination: corpus
+          user-agent: OpenSZRaw-CI/1.0
+          fixtures: |
+            ${{ env.QGD_PROFILE_NAME }} ${{ env.QGD_PROFILE_SHA256 }} ${{ env.QGD_PROFILE_URL }} ${{ env.QGD_PROFILE_FALLBACK_URL }}
+            ${{ env.QGD_MRM_NAME }} ${{ env.QGD_MRM_SHA256 }} ${{ env.QGD_MRM_URL }} ${{ env.QGD_MRM_FALLBACK_URL }}
 
       - name: cargo test
         run: cargo test --workspace --all-targets
