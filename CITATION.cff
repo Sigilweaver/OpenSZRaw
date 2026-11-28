@@ -32,3 +32,7 @@ keywords:
   - qgd
   - bioinformatics
   - Rust
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.24586025"
+    description: "Zenodo concept DOI (resolves to the latest archived version)"
