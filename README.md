@@ -1,6 +1,7 @@
 # OpenSZRaw
 
 [![CI](https://github.com/Sigilweaver/OpenSZRaw/actions/workflows/ci.yml/badge.svg)](https://github.com/Sigilweaver/OpenSZRaw/actions/workflows/ci.yml)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24586025.svg)](https://doi.org/10.5281/zenodo.24586025)
 [![crates.io](https://img.shields.io/crates/v/openszraw.svg)](https://crates.io/crates/openszraw)
 [![PyPI](https://img.shields.io/pypi/v/openszraw.svg)](https://pypi.org/project/openszraw/)
 [![docs.rs](https://img.shields.io/docsrs/openszraw)](https://docs.rs/openszraw)
